@@ -1954,28 +1954,28 @@ function toggleBilling() {
   document.getElementById('save-badge').style.opacity = isAnnual ? '1' : '.4';
 }
 
-/* ─── Form submission ─── */
-function submitForm() {
-  const name  = document.getElementById('f-name').value.trim();
-  const phone = document.getElementById('f-phone').value.trim();
-  const email = document.getElementById('f-email').value.trim();
+// /* ─── Form submission ─── */
+// function submitForm() {
+//   const name  = document.getElementById('f-name').value.trim();
+//   const phone = document.getElementById('f-phone').value.trim();
+//   const email = document.getElementById('f-email').value.trim();
 
-  if (!name) { highlight('f-name', 'Please enter your name'); return; }
-  if (!phone) { highlight('f-phone', 'Please enter your phone number'); return; }
-  if (!email || !email.includes('@')) { highlight('f-email', 'Please enter a valid email'); return; }
+//   if (!name) { highlight('f-name', 'Please enter your name'); return; }
+//   if (!phone) { highlight('f-phone', 'Please enter your phone number'); return; }
+//   if (!email || !email.includes('@')) { highlight('f-email', 'Please enter a valid email'); return; }
 
-  const btn = document.getElementById('f-btn');
-  btn.textContent = 'Sending…';
-  btn.disabled = true;
-  btn.style.opacity = '.7';
+//   const btn = document.getElementById('f-btn');
+//   btn.textContent = 'Sending…';
+//   btn.disabled = true;
+//   btn.style.opacity = '.7';
 
-  // Simulate API call
-  setTimeout(() => {
-    document.getElementById('form-main').style.display = 'none';
-    const s = document.getElementById('form-success');
-    s.style.display = 'block';
-  }, 1400);
-}
+//   // Simulate API call
+//   setTimeout(() => {
+//     document.getElementById('form-main').style.display = 'none';
+//     const s = document.getElementById('form-success');
+//     s.style.display = 'block';
+//   }, 1400);
+// }
 
 function highlight(id, msg) {
   const el = document.getElementById(id);
@@ -2035,6 +2035,8 @@ document.addEventListener('DOMContentLoaded', () => {
     document.body.style.opacity = '1';
   });
 });
+
 </script>
+<script src="form.js"></script>
 </body>
 </html>
