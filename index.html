@@ -167,6 +167,26 @@ section{padding:112px 0;position:relative}
 .nav-toggle span::before,.nav-toggle span::after{content:'';position:absolute;left:0;width:18px;height:2px;background:var(--ink)}
 .nav-toggle span::before{top:-6px}
 .nav-toggle span::after{top:6px}
+   .brand-wrap{
+  display:flex;
+  flex-direction:column;
+  line-height:1.1;
+}
+
+.brand-main{
+  display:flex;
+  align-items:center;
+  gap:10px;
+}
+
+.brand-tagline{
+  font-size:10px;
+  letter-spacing:2px;
+  color:#000;
+  margin-left:46px;
+  margin-top:2px;
+  font-weight:500;
+}
 
 /* ===========================================================
    Hero
@@ -894,14 +914,21 @@ section{padding:112px 0;position:relative}
 <body>
 
 <!-- ========== NAVBAR ========== -->
-<header class="navbar" id="nav">
-  <div class="container nav-wrap">
-    <a href="#top" class="brand" aria-label="CareOpsX home">
+<a href="#top" class="brand" aria-label="CareOpsX home">
+  <div class="brand-wrap">
+    <div class="brand-main">
       <span class="brand-mark" aria-hidden="true">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 12h14"/></svg>
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M12 5v14M5 12h14"/>
+        </svg>
       </span>
       <span>Care<b>OpsX</b></span>
-    </a>
+    </div>
+
+    <!-- Tagline -->
+    <span class="brand-tagline">HEALTHCARE OPERATIONS</span>
+  </div>
+</a>
 
     <nav class="nav-links" id="navLinks">
       <a href="#features">Features</a>
