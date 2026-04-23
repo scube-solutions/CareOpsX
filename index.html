@@ -226,7 +226,9 @@ section{padding:112px 0;position:relative}
   font-size:.9rem;
 }
 
-.avatars{display:flex}
+.avatars{
+  display:flex;
+}
 
 .avatars span{
   width:32px;
@@ -266,6 +268,7 @@ section{padding:112px 0;position:relative}
   display:flex;
   justify-content:flex-end;
   align-items:center;
+  overflow:visible;
 }
 
 .hero-card{
@@ -279,6 +282,7 @@ section{padding:112px 0;position:relative}
   box-shadow:var(--shadow-lg);
   padding:18px;
   transform:none;
+  overflow:visible;
 }
 
 .hero-card::before{
@@ -390,7 +394,9 @@ section{padding:112px 0;position:relative}
   display:inline-block;
 }
 
-.hc-side a.active i{background:var(--teal)}
+.hc-side a.active i{
+  background:var(--teal);
+}
 
 .hc-main{
   display:flex;
@@ -529,14 +535,14 @@ section{padding:112px 0;position:relative}
 }
 
 .floating.a{
-  top:16px;
-  left:16px;
+  top:-22px;
+  left:12px;
   animation-delay:0s;
 }
 
 .floating.b{
-  right:16px;
-  bottom:16px;
+  right:12px;
+  bottom:-18px;
   animation-delay:1.5s;
 }
 
@@ -561,13 +567,13 @@ section{padding:112px 0;position:relative}
   }
 
   .floating.a{
-    top:22px;
-    left:12px;
+    top:-18px;
+    left:10px;
   }
 
   .floating.b{
-    right:12px;
-    bottom:22px;
+    right:10px;
+    bottom:-14px;
   }
 }
 
