@@ -27,6 +27,7 @@ export default function AdminDoctorsPage() {
   const [form, setForm] = useState(initialDoctorForm);
   const [deleteConfirm, setDeleteConfirm] = useState(null); // doctor to delete
   const [deletingId, setDeletingId] = useState(null);
+  const [apptBlock, setApptBlock] = useState(null); // { doctor, appointments } when 409
 
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [activeDoctor, setActiveDoctor] = useState(null);
@@ -110,13 +111,32 @@ export default function AdminDoctorsPage() {
     if (!deleteConfirm) return;
     setDeletingId(deleteConfirm.id);
     try {
-      await api(`/doctors/${deleteConfirm.id}`, { method: 'DELETE' });
+      const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL || 'http://localhost:5000/api'}/doctors/${deleteConfirm.id}`, {
+        method: 'DELETE',
+        headers: { Authorization: `Bearer ${localStorage.getItem('token')}` }
+      });
+      if (res.status === 409) {
+        const body = await res.json();
+        setApptBlock({ doctor: deleteConfirm, appointments: body.appointments || [] });
+        setDeleteConfirm(null);
+        return;
+      }
+      if (!res.ok) { const b = await res.json(); throw new Error(b.error || 'Failed to delete'); }
       setDeleteConfirm(null);
       await loadDoctors();
     } catch (err) {
       alert(err.message || 'Failed to delete doctor');
     } finally {
       setDeletingId(null);
+    }
+  };
+
+  const cancelAppt = async (apptId) => {
+    try {
+      await api(`/appointments/${apptId}/status`, { method: 'PATCH', body: JSON.stringify({ status: 'cancelled' }) });
+      setApptBlock(prev => prev ? { ...prev, appointments: prev.appointments.filter(a => a.id !== apptId) } : null);
+    } catch (err) {
+      alert(err.message || 'Failed to cancel appointment');
     }
   };
 
@@ -348,6 +368,66 @@ export default function AdminDoctorsPage() {
                 {deletingId ? 'Deleting…' : 'Delete'}
               </button>
             </div>
+          </div>
+        </div>
+      )}
+
+      {apptBlock && (
+        <div style={{ position: 'fixed', inset: 0, background: 'rgba(15,23,42,.55)', display: 'grid', placeItems: 'center', zIndex: 40 }}>
+          <div style={{ background: T.card, borderRadius: 14, padding: '28px 32px', width: 'min(560px, 96vw)', maxHeight: '85vh', display: 'flex', flexDirection: 'column', boxShadow: '0 24px 64px rgba(0,0,0,.2)' }}>
+            <h3 style={{ margin: '0 0 4px', fontFamily: T.display, color: T.navy, fontSize: 18 }}>Cannot Delete Doctor</h3>
+            <p style={{ margin: '0 0 16px', color: T.muted, fontSize: 14 }}>
+              <strong>Dr. {doctorName(apptBlock.doctor)}</strong> has {apptBlock.appointments.length} active appointment{apptBlock.appointments.length !== 1 ? 's' : ''}. Cancel them first, then delete.
+            </p>
+            {apptBlock.appointments.length === 0 ? (
+              <div style={{ textAlign: 'center', padding: '16px 0' }}>
+                <p style={{ color: '#16a34a', fontWeight: 600, marginBottom: 16 }}>✓ All appointments cancelled. You can now delete this doctor.</p>
+                <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 10 }}>
+                  <button onClick={() => setApptBlock(null)} style={{ border: `1px solid ${T.border}`, background: '#fff', borderRadius: 8, padding: '9px 18px', cursor: 'pointer', fontFamily: T.body }}>Close</button>
+                  <button onClick={() => { setDeleteConfirm(apptBlock.doctor); setApptBlock(null); }}
+                    style={{ border: 'none', background: '#dc2626', color: '#fff', borderRadius: 8, padding: '9px 18px', cursor: 'pointer', fontFamily: T.body, fontWeight: 600 }}>
+                    Delete Doctor
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <>
+                <div style={{ overflowY: 'auto', flex: 1, borderRadius: 8, border: `1px solid ${T.border}` }}>
+                  <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
+                    <thead>
+                      <tr style={{ background: T.bg }}>
+                        <th style={{ padding: '10px 14px', textAlign: 'left', fontFamily: T.display, color: T.navy, fontWeight: 600 }}>Patient</th>
+                        <th style={{ padding: '10px 14px', textAlign: 'left', fontFamily: T.display, color: T.navy, fontWeight: 600 }}>Date</th>
+                        <th style={{ padding: '10px 14px', textAlign: 'left', fontFamily: T.display, color: T.navy, fontWeight: 600 }}>Time</th>
+                        <th style={{ padding: '10px 14px', textAlign: 'left', fontFamily: T.display, color: T.navy, fontWeight: 600 }}>Status</th>
+                        <th style={{ padding: '10px 14px' }}></th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {apptBlock.appointments.map((a, i) => (
+                        <tr key={a.id} style={{ borderTop: i === 0 ? 'none' : `1px solid ${T.border}` }}>
+                          <td style={{ padding: '10px 14px', fontFamily: T.body, color: T.navy }}>{a.patient_name}</td>
+                          <td style={{ padding: '10px 14px', color: T.muted }}>{a.appointment_date}</td>
+                          <td style={{ padding: '10px 14px', color: T.muted }}>{a.appointment_time?.slice(0,5)}</td>
+                          <td style={{ padding: '10px 14px' }}>
+                            <span style={{ background: '#fef9c3', color: '#92400e', borderRadius: 20, padding: '2px 10px', fontSize: 11, fontWeight: 600, textTransform: 'capitalize' }}>{a.status}</span>
+                          </td>
+                          <td style={{ padding: '10px 14px', textAlign: 'right' }}>
+                            <button onClick={() => cancelAppt(a.id)}
+                              style={{ border: '1px solid #fecaca', background: '#fef2f2', color: '#b91c1c', borderRadius: 6, padding: '5px 12px', cursor: 'pointer', fontSize: 12, fontWeight: 600 }}>
+                              Cancel
+                            </button>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+                <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: 16 }}>
+                  <button onClick={() => setApptBlock(null)} style={{ border: `1px solid ${T.border}`, background: '#fff', borderRadius: 8, padding: '9px 18px', cursor: 'pointer', fontFamily: T.body }}>Close</button>
+                </div>
+              </>
+            )}
           </div>
         </div>
       )}
