@@ -71,4 +71,79 @@ const deleteDoctor = async (req, res) => {
   }
 };
 
-module.exports = { getDoctors, getDoctorById, createDoctor, deleteDoctor };
+// GET /doctors/me/schedule?date=YYYY-MM-DD
+const getDoctorSchedule = async (req, res) => {
+  try {
+    const { date } = req.query;
+    if (!date) return res.status(400).json({ error: 'date is required' });
+
+    const { data: doctor } = await supabase.from('doctors').select('id').eq('user_id', req.user.id).single();
+    if (!doctor) return res.status(404).json({ error: 'Doctor profile not found' });
+    const doctor_id = doctor.id;
+
+    const { data: avail } = await supabase.from('doctor_availability').select('*').eq('doctor_id', doctor_id).single();
+    if (!avail) return res.status(200).json({ slots: [], message: 'Availability not configured' });
+
+    const dayName = new Date(date).toLocaleDateString('en-US', { weekday: 'long' });
+    if (!avail.working_days.includes(dayName)) {
+      return res.status(200).json({ slots: [], message: `Not a working day (${dayName})` });
+    }
+
+    const [startH, startM] = avail.start_time.split(':').map(Number);
+    const [endH, endM]     = avail.end_time.split(':').map(Number);
+    const allTimes = [];
+    for (let m = startH * 60 + startM; m < endH * 60 + endM; m += avail.slot_duration) {
+      allTimes.push(`${String(Math.floor(m/60)).padStart(2,'0')}:${String(m%60).padStart(2,'0')}`);
+    }
+
+    const { data: booked } = await supabase
+      .from('appointments').select('appointment_time, patients(first_name, last_name)')
+      .eq('doctor_id', doctor_id).eq('appointment_date', date).in('status', ['booked', 'confirmed']);
+
+    const bookedMap = {};
+    (booked || []).forEach(b => { bookedMap[String(b.appointment_time).slice(0,5)] = b.patients; });
+
+    const { data: blocked } = await supabase
+      .from('doctor_blocked_slots').select('blocked_time').eq('doctor_id', doctor_id).eq('blocked_date', date);
+    const blockedSet = new Set((blocked || []).map(b => String(b.blocked_time).slice(0,5)));
+
+    return res.json({
+      slots: allTimes.map(time => ({
+        time,
+        status: bookedMap[time] ? 'booked' : blockedSet.has(time) ? 'blocked' : 'available',
+        patient: bookedMap[time] || null,
+      })),
+      date, doctor_id, working_day: dayName,
+    });
+  } catch (err) {
+    return res.status(500).json({ error: err.message });
+  }
+};
+
+// POST /doctors/me/schedule/block  — body: { date, slot_time, action: 'block'|'unblock' }
+const toggleBlockSlot = async (req, res) => {
+  try {
+    const { date, slot_time, action } = req.body;
+    if (!date || !slot_time || !action) return res.status(400).json({ error: 'date, slot_time, action required' });
+
+    const { data: doctor } = await supabase.from('doctors').select('id').eq('user_id', req.user.id).single();
+    if (!doctor) return res.status(404).json({ error: 'Doctor profile not found' });
+
+    if (action === 'block') {
+      const { error } = await supabase.from('doctor_blocked_slots').upsert(
+        { doctor_id: doctor.id, blocked_date: date, blocked_time: slot_time, created_by: req.user.id, created_at: new Date().toISOString() },
+        { onConflict: 'doctor_id,blocked_date,blocked_time' }
+      );
+      if (error) throw error;
+    } else {
+      const { error } = await supabase.from('doctor_blocked_slots')
+        .delete().eq('doctor_id', doctor.id).eq('blocked_date', date).eq('blocked_time', slot_time);
+      if (error) throw error;
+    }
+    return res.json({ message: action === 'block' ? 'Slot blocked' : 'Slot unblocked', date, slot_time });
+  } catch (err) {
+    return res.status(500).json({ error: err.message });
+  }
+};
+
+module.exports = { getDoctors, getDoctorById, createDoctor, deleteDoctor, getDoctorSchedule, toggleBlockSlot };

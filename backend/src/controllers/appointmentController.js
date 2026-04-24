@@ -137,12 +137,21 @@ const getSlots = async (req, res) => {
       .eq('appointment_date', date)
       .in('status', ['booked', 'confirmed']);
 
-    const bookedTimes = (booked || []).map(b => toHHMM(b.appointment_time));
+    const bookedTimes = new Set((booked || []).map(b => toHHMM(b.appointment_time)));
 
-    // Mark each slot as available or booked
+    // Get doctor-blocked slots for this date
+    const { data: blocked } = await supabase
+      .from('doctor_blocked_slots')
+      .select('blocked_time')
+      .eq('doctor_id', doctor_id)
+      .eq('blocked_date', date);
+
+    const blockedTimes = new Set((blocked || []).map(b => String(b.blocked_time).slice(0, 5)));
+
+    // Mark each slot as available or not (booked or doctor-blocked)
     const result = slots.map(slot => ({
       time      : slot,
-      available : !bookedTimes.includes(slot)
+      available : !bookedTimes.has(slot) && !blockedTimes.has(slot)
     }));
 
     return res.status(200).json({ slots: result, date, doctor_id });
@@ -463,12 +472,76 @@ const rescheduleAppointment = async (req, res) => {
   }
 };
 
+/* ─────────────────────────────────────────
+   GET SINGLE APPOINTMENT WITH VISIT DETAILS
+   GET /appointments/:id
+───────────────────────────────────────── */
+const getAppointmentById = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { data, error } = await supabase
+      .from('appointments')
+      .select('*')
+      .eq('id', id)
+      .single();
+
+    if (error || !data) return res.status(404).json({ error: 'Appointment not found' });
+
+    const { data: patient } = data.patient_id
+      ? await supabase.from('patients').select('id, first_name, last_name, phone, email, patient_uid').eq('id', data.patient_id).single()
+      : { data: null };
+
+    const { data: doctor } = data.doctor_id
+      ? await supabase.from('doctors').select('id, user_id, specialization').eq('id', data.doctor_id).single()
+      : { data: null };
+
+    let doctorUser = null;
+    if (doctor?.user_id) {
+      const { data: u } = await supabase.from('users').select('first_name, last_name').eq('id', doctor.user_id).single();
+      doctorUser = u;
+    }
+
+    let consultation = null;
+    let prescriptions = [];
+    let labOrders = [];
+
+    if (data.consultation_id) {
+      const { data: consult } = await supabase.from('consultations').select('*').eq('id', data.consultation_id).single();
+      consultation = consult;
+      if (consultation) {
+        const [presRes, labRes] = await Promise.all([
+          supabase.from('prescriptions').select('*, prescription_items(*)').eq('consultation_id', data.consultation_id),
+          supabase.from('lab_orders').select('*, lab_reports(*)').eq('consultation_id', data.consultation_id)
+        ]);
+        prescriptions = presRes.data || [];
+        labOrders = labRes.data || [];
+      }
+    }
+
+    return res.json({
+      appointment: {
+        ...data,
+        appointment_time: toHHMM(data.appointment_time),
+        patients: patient || null,
+        doctors: { specialization: doctor?.specialization, users: doctorUser }
+      },
+      consultation,
+      prescriptions,
+      lab_orders: labOrders
+    });
+  } catch (err) {
+    console.error('Get appointment by id error:', err.message);
+    return res.status(500).json({ error: 'Internal server error' });
+  }
+};
+
 module.exports = {
   setAvailability,
   getAvailability,
   getSlots,
   bookAppointment,
   getAppointments,
+  getAppointmentById,
   updateStatus,
   rescheduleAppointment
 };

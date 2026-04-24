@@ -44,4 +44,9 @@ router.post('/lab-tests', ...adminOnly, ctrl.createLabTest);
 router.put('/lab-tests/:id', ...adminOnly, ctrl.updateLabTest);
 router.delete('/lab-tests/:id', ...adminOnly, ctrl.deleteLabTest);
 
+router.get('/specializations',              verifyToken, ctrl.getSpecializations);
+router.post('/specializations',             ...adminOnly, ctrl.createSpecialization);
+router.patch('/specializations/:id/toggle', ...adminOnly, ctrl.toggleSpecialization);
+router.delete('/specializations/:id',       ...adminOnly, ctrl.deleteSpecialization);
+
 module.exports = router;

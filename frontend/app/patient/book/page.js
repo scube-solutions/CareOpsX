@@ -19,20 +19,12 @@ const T = {
 
 const STEPS = ['Specialty', 'Doctor', 'Date', 'Slot', 'Details', 'Payment', 'Confirm'];
 
-const SPECIALTIES = [
-  { name: 'General Medicine',  icon: '🩺' },
-  { name: 'Cardiology',        icon: '❤️' },
-  { name: 'Orthopedics',       icon: '🦴' },
-  { name: 'Gynecology',        icon: '🌸' },
-  { name: 'Pediatrics',        icon: '👶' },
-  { name: 'Dermatology',       icon: '🧴' },
-  { name: 'ENT',               icon: '👂' },
-  { name: 'Ophthalmology',     icon: '👁️' },
-  { name: 'Neurology',         icon: '🧠' },
-  { name: 'Psychiatry',        icon: '💬' },
-  { name: 'Oncology',          icon: '🔬' },
-  { name: 'Urology',           icon: '⚕️' },
-];
+const SPECIALTY_ICONS = {
+  'General Medicine': '🩺', 'Cardiology': '❤️', 'Orthopedics': '🦴',
+  'Gynecology': '🌸', 'Pediatrics': '👶', 'Dermatology': '🧴',
+  'ENT': '👂', 'Ophthalmology': '👁️', 'Neurology': '🧠',
+  'Psychiatry': '💬', 'Oncology': '🔬', 'Urology': '⚕️',
+};
 
 // ─── Progress stepper ────────────────────────────────────
 function Stepper({ step }) {
@@ -91,23 +83,42 @@ function BtnBack({ onClick }) {
 
 // ─── Step 0: Specialty ───────────────────────────────────
 function StepSpecialty({ selected, onSelect }) {
+  const [specialties, setSpecialties] = useState([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    api('/doctors/specializations')
+      .then(r => setSpecialties((r.specializations || []).map(name => ({ name, icon: SPECIALTY_ICONS[name] || '🏥' }))))
+      .catch(() => setSpecialties([]))
+      .finally(() => setLoading(false));
+  }, []);
+
   return (
     <div>
       <h2 style={{ fontFamily: T.display, fontSize: 22, fontWeight: 700, color: T.navy, marginBottom: 8 }}>Choose a specialty</h2>
       <p style={{ color: T.muted, fontSize: 14, marginBottom: 24 }}>Select the type of care you need</p>
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 12 }}>
-        {SPECIALTIES.map(sp => (
-          <button key={sp.name} onClick={() => onSelect(sp.name)} style={{
-            padding: '16px 12px', borderRadius: 12, textAlign: 'center', cursor: 'pointer',
-            border: `2px solid ${selected === sp.name ? T.teal : T.border}`,
-            background: selected === sp.name ? '#f0fdfb' : T.card,
-            transition: 'all .15s',
-          }}>
-            <div style={{ fontSize: 22, marginBottom: 6 }}>{sp.icon}</div>
-            <div style={{ fontSize: 12, fontWeight: 600, color: selected === sp.name ? T.teal : T.text, fontFamily: T.body }}>{sp.name}</div>
-          </button>
-        ))}
-      </div>
+      {loading ? (
+        <div style={{ textAlign: 'center', padding: '48px 0', color: T.muted }}>Loading…</div>
+      ) : specialties.length === 0 ? (
+        <div style={{ textAlign: 'center', padding: '48px 0', color: T.muted }}>
+          <div style={{ fontSize: 32, marginBottom: 8 }}>🏥</div>
+          <p>No specialties available yet. Please contact the clinic.</p>
+        </div>
+      ) : (
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 12 }}>
+          {specialties.map(sp => (
+            <button key={sp.name} onClick={() => onSelect(sp.name)} style={{
+              padding: '16px 12px', borderRadius: 12, textAlign: 'center', cursor: 'pointer',
+              border: `2px solid ${selected === sp.name ? T.teal : T.border}`,
+              background: selected === sp.name ? '#f0fdfb' : T.card,
+              transition: 'all .15s',
+            }}>
+              <div style={{ fontSize: 22, marginBottom: 6 }}>{sp.icon}</div>
+              <div style={{ fontSize: 12, fontWeight: 600, color: selected === sp.name ? T.teal : T.text, fontFamily: T.body }}>{sp.name}</div>
+            </button>
+          ))}
+        </div>
+      )}
     </div>
   );
 }
@@ -219,15 +230,12 @@ function StepSlot({ doctor, date, selected, onSelect }) {
     setLoading(true);
     setSlots([]);
     api(`/appointments/slots?doctor_id=${doctor.id}&date=${date}`)
-      .then(res => {
-        const availableSlots = (res.slots || [])
-          .filter((item) => item.available)
-          .map((item) => item.time);
-        setSlots(availableSlots);
-      })
+      .then(res => setSlots(res.slots || []))
       .catch(() => setSlots([]))
       .finally(() => setLoading(false));
   }, [doctor?.id, date]);
+
+  const availableCount = slots.filter(s => s.available).length;
 
   return (
     <div>
@@ -246,17 +254,38 @@ function StepSlot({ doctor, date, selected, onSelect }) {
         </div>
       ) : (
         <>
-          <div style={{ fontSize: 13, color: T.muted, marginBottom: 12 }}>{slots.length} slots available</div>
+          <div style={{ fontSize: 13, color: T.muted, marginBottom: 12 }}>
+            <span style={{ color: T.teal, fontWeight: 600 }}>{availableCount} available</span>
+            {slots.length - availableCount > 0 && <span> · {slots.length - availableCount} filled</span>}
+          </div>
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginBottom: 12, fontSize: 11, color: T.muted }}>
+            <span style={{ display: 'flex', alignItems: 'center', gap: 4 }}><span style={{ width: 12, height: 12, borderRadius: 3, background: '#f0fdfb', border: `1.5px solid ${T.teal}`, display: 'inline-block' }} /> Available</span>
+            <span style={{ display: 'flex', alignItems: 'center', gap: 4 }}><span style={{ width: 12, height: 12, borderRadius: 3, background: '#fef2f2', border: '1.5px solid #fca5a5', display: 'inline-block' }} /> Filled</span>
+          </div>
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 10 }}>
-            {slots.map(slot => (
-              <button key={slot} onClick={() => onSelect(slot)} style={{
-                padding: '10px 6px', borderRadius: 8, border: `2px solid ${selected === slot ? T.teal : T.border}`,
-                background: selected === slot ? '#f0fdfb' : T.card,
-                color: selected === slot ? T.teal : T.text,
-                fontFamily: T.body, fontWeight: selected === slot ? 700 : 400,
-                fontSize: 13, cursor: 'pointer', transition: 'all .12s',
-              }}>{slot}</button>
-            ))}
+            {slots.map(slot => {
+              const isFilled = !slot.available;
+              const isSelected = selected === slot.time;
+              return (
+                <button key={slot.time}
+                  onClick={() => !isFilled && onSelect(slot.time)}
+                  disabled={isFilled}
+                  title={isFilled ? 'This slot is already booked' : ''}
+                  style={{
+                    padding: '10px 6px', borderRadius: 8,
+                    border: `2px solid ${isSelected ? T.teal : isFilled ? '#fca5a5' : T.border}`,
+                    background: isSelected ? '#f0fdfb' : isFilled ? '#fef2f2' : T.card,
+                    color: isSelected ? T.teal : isFilled ? '#b91c1c' : T.text,
+                    fontFamily: T.body, fontWeight: isSelected ? 700 : 400,
+                    fontSize: 13, cursor: isFilled ? 'not-allowed' : 'pointer',
+                    opacity: isFilled ? 0.7 : 1, transition: 'all .12s',
+                    position: 'relative',
+                  }}>
+                  {slot.time}
+                  {isFilled && <div style={{ fontSize: 9, fontWeight: 700, marginTop: 2, color: '#b91c1c' }}>FILLED</div>}
+                </button>
+              );
+            })}
           </div>
         </>
       )}
