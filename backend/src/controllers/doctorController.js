@@ -13,7 +13,7 @@ const attachUsers = async (doctors) => {
 const getDoctors = async (req, res) => {
   try {
     const { specialty } = req.query;
-    let query = supabase.from('doctors').select('id, user_id, specialization, consultation_fee, experience_years, is_active').eq('is_active', true);
+    let query = supabase.from('doctors').select('id, user_id, specialization, consultation_fee, experience_years, is_active').neq('is_active', false);
     if (specialty) query = query.ilike('specialization', `%${specialty}%`);
     const { data, error } = await query;
     if (error) throw error;
