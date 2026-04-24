@@ -256,6 +256,22 @@ const toggleUserActive = async (req, res) => {
   }
 };
 
+const cascadeDeleteDoctor = async (doctorId) => {
+  const { data: labOrders } = await supabase.from('lab_orders').select('id').eq('doctor_id', doctorId);
+  const loIds = (labOrders || []).map(l => l.id);
+  if (loIds.length) await supabase.from('lab_results').delete().in('lab_order_id', loIds);
+  await supabase.from('prescriptions').delete().eq('doctor_id', doctorId);
+  await supabase.from('lab_orders').delete().eq('doctor_id', doctorId);
+  await supabase.from('consultations').delete().eq('doctor_id', doctorId);
+  await supabase.from('follow_ups').delete().eq('doctor_id', doctorId);
+  await supabase.from('appointments').delete().eq('doctor_id', doctorId);
+  await supabase.from('doctor_leaves').delete().eq('doctor_id', doctorId);
+  await supabase.from('doctor_availability').delete().eq('doctor_id', doctorId);
+  await supabase.from('doctor_blocked_slots').delete().eq('doctor_id', doctorId);
+  const { error } = await supabase.from('doctors').delete().eq('id', doctorId);
+  if (error) throw error;
+};
+
 const deleteUser = async (req, res) => {
   try {
     const { id } = req.params;
@@ -282,6 +298,7 @@ const deleteUser = async (req, res) => {
           }));
           return res.status(409).json({ error: 'Doctor has active appointments', appointments });
         }
+        await cascadeDeleteDoctor(doctor.id);
       }
     }
     const { error } = await supabase.from('users').delete().eq('id', id);
