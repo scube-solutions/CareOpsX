@@ -262,6 +262,27 @@ const deleteUser = async (req, res) => {
     const { data: user } = await supabase.from('users').select('id, first_name, last_name, role_id').eq('id', id).single();
     if (!user) return res.status(404).json({ error: 'User not found' });
     if (user.role_id === 1) return res.status(403).json({ error: 'Cannot delete admin accounts' });
+    if (user.role_id === 2) {
+      const { data: doctor } = await supabase.from('doctors').select('id').eq('user_id', id).single();
+      if (doctor) {
+        const { data: appts } = await supabase
+          .from('appointments').select('id, appointment_date, appointment_time, status, patient_id')
+          .eq('doctor_id', doctor.id).not('status', 'in', '("cancelled","completed")');
+        if (appts && appts.length > 0) {
+          const patientIds = [...new Set(appts.map(a => a.patient_id).filter(Boolean))];
+          const { data: patients } = await supabase.from('patients').select('id, user_id').in('id', patientIds);
+          const userIds = (patients || []).map(p => p.user_id).filter(Boolean);
+          const { data: pUsers } = await supabase.from('users').select('id, first_name, last_name').in('id', userIds);
+          const uMap = {}; (pUsers || []).forEach(u => { uMap[u.id] = u; });
+          const pMap = {}; (patients || []).forEach(p => { pMap[p.id] = uMap[p.user_id] || null; });
+          const appointments = appts.map(a => ({
+            id: a.id, appointment_date: a.appointment_date, appointment_time: a.appointment_time, status: a.status,
+            patient_name: pMap[a.patient_id] ? `${pMap[a.patient_id].first_name} ${pMap[a.patient_id].last_name}` : 'Unknown Patient'
+          }));
+          return res.status(409).json({ error: 'Doctor has active appointments', appointments });
+        }
+      }
+    }
     const { error } = await supabase.from('users').delete().eq('id', id);
     if (error) throw error;
     await auditLog({ user_id: req.user.id, role_id: req.user.role_id, action: 'DELETE_USER', module: 'Admin', entity_type: 'user', entity_id: id });
