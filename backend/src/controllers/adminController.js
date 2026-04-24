@@ -216,7 +216,7 @@ const createUser = async (req, res) => {
     if (existing) return res.status(409).json({ error: 'Email already exists' });
     const password_hash = await bcrypt.hash(password, 10);
     const primaryRole = role_id || (Array.isArray(roles) && roles[0]) || 5;
-    const { data, error } = await supabase.from('users').insert([{ first_name, last_name, email, phone: phone || null, password_hash, role_id: primaryRole, roles: roles || [primaryRole], branch_id: branch_id || null, is_active: true, created_by: req.user.id }]).select('id, first_name, last_name, email, phone, role_id, roles, is_active, branch_id, created_at').single();
+    const { data, error } = await supabase.from('users').insert([{ first_name, last_name, email, phone: phone || null, password_hash, role_id: primaryRole, branch_id: branch_id || null, is_active: true, created_by: req.user.id }]).select('id, first_name, last_name, email, phone, role_id, is_active, branch_id, created_at').single();
     if (error) throw error;
     await auditLog({ user_id: req.user.id, role_id: req.user.role_id, action: 'CREATE_USER', module: 'Admin', entity_type: 'user', entity_id: data.id });
     return res.status(201).json({ message: 'User created', user: data });
@@ -227,8 +227,9 @@ const createUser = async (req, res) => {
 
 const updateUser = async (req, res) => {
   try {
-    const { password, ...rest } = req.body;
+    const { password, roles, ...rest } = req.body;
     let payload = { ...rest, updated_by: req.user.id, updated_at: new Date().toISOString() };
+    if (Array.isArray(roles) && roles.length > 0) payload.role_id = roles[0];
     if (password) {
       const bcrypt = require('bcryptjs');
       payload.password_hash = await bcrypt.hash(password, 10);
