@@ -13,7 +13,7 @@ const attachUsers = async (doctors) => {
 const getDoctors = async (req, res) => {
   try {
     const { specialty } = req.query;
-    let query = supabase.from('doctors').select('id, user_id, specialization, consultation_fee, experience_years, is_active');
+    let query = supabase.from('doctors').select('id, user_id, specialization, consultation_fee, experience_years, is_active').eq('is_active', true);
     if (specialty) query = query.ilike('specialization', `%${specialty}%`);
     const { data, error } = await query;
     if (error) throw error;
@@ -59,12 +59,12 @@ const createDoctor = async (req, res) => {
   }
 };
 
-// DELETE /doctors/:id
+// DELETE /doctors/:id  (soft delete — preserves appointment history)
 const deleteDoctor = async (req, res) => {
   try {
-    const { error } = await supabase.from('doctors').delete().eq('id', req.params.id);
+    const { error } = await supabase.from('doctors').update({ is_active: false }).eq('id', req.params.id);
     if (error) throw error;
-    return res.status(200).json({ message: 'Doctor deleted' });
+    return res.status(200).json({ message: 'Doctor deactivated' });
   } catch (err) {
     console.error('deleteDoctor error:', err.message);
     return res.status(500).json({ error: err.message });
