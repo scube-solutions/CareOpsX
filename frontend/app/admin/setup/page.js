@@ -22,6 +22,7 @@ export default function SetupPage() {
   const [editingLabTest, setEditingLabTest] = useState(null);
   const [specializations, setSpecializations] = useState([]);
   const [specName, setSpecName] = useState('');
+  const [apptBlockUser, setApptBlockUser] = useState(null);
 
   const loadAll = async () => {
     try {
@@ -140,12 +141,28 @@ export default function SetupPage() {
   const deleteUser = async () => {
     if (!selectedUser) return;
     try {
-      await api(`/admin/users/${selectedUser.id}`, { method: 'DELETE' });
+      const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL || 'http://localhost:5000/api'}/admin/users/${selectedUser.id}`, {
+        method: 'DELETE',
+        headers: { Authorization: `Bearer ${localStorage.getItem('token')}` }
+      });
+      if (res.status === 409) {
+        const body = await res.json();
+        setApptBlockUser({ user: selectedUser, appointments: body.appointments || [] });
+        setConfirmDelete(false);
+        return;
+      }
+      if (!res.ok) { const b = await res.json(); throw new Error(b.error || 'Failed to delete'); }
       setMsg(`User "${selectedUser.first_name} ${selectedUser.last_name}" deleted`);
-      setSelectedUser(null);
-      setConfirmDelete(false);
+      setSelectedUser(null); setConfirmDelete(false);
       await loadAll();
     } catch (e) { setMsg(e.message); setConfirmDelete(false); }
+  };
+
+  const cancelUserAppt = async (apptId) => {
+    try {
+      await api(`/appointments/${apptId}/status`, { method: 'PATCH', body: JSON.stringify({ status: 'cancelled' }) });
+      setApptBlockUser(prev => prev ? { ...prev, appointments: prev.appointments.filter(a => a.id !== apptId) } : null);
+    } catch (e) { setMsg(e.message); }
   };
 
   const saveLabTest = async () => {
@@ -489,6 +506,62 @@ export default function SetupPage() {
                 })}
               </tbody>
             </table>
+          </div>
+        </div>
+      )}
+
+      {apptBlockUser && (
+        <div style={{ position: 'fixed', inset: 0, background: 'rgba(15,23,42,.55)', display: 'grid', placeItems: 'center', zIndex: 50 }}>
+          <div style={{ background: '#fff', borderRadius: 14, padding: '28px 32px', width: 'min(560px, 96vw)', maxHeight: '85vh', display: 'flex', flexDirection: 'column', boxShadow: '0 24px 64px rgba(0,0,0,.2)' }}>
+            <h3 style={{ margin: '0 0 4px', fontSize: 18, fontWeight: 700, color: '#0f1f3d' }}>Cannot Delete User</h3>
+            <p style={{ margin: '0 0 16px', color: '#64748b', fontSize: 14 }}>
+              <strong>{apptBlockUser.user.first_name} {apptBlockUser.user.last_name}</strong> is a doctor with {apptBlockUser.appointments.length} active appointment{apptBlockUser.appointments.length !== 1 ? 's' : ''}. Cancel them first, then delete.
+            </p>
+            {apptBlockUser.appointments.length === 0 ? (
+              <div style={{ textAlign: 'center', padding: '16px 0' }}>
+                <p style={{ color: '#16a34a', fontWeight: 600, marginBottom: 16 }}>✓ All appointments cancelled. You can now delete this user.</p>
+                <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 10 }}>
+                  <button onClick={() => setApptBlockUser(null)} style={s.btnSec}>Close</button>
+                  <button onClick={() => { setSelectedUser(apptBlockUser.user); setApptBlockUser(null); setConfirmDelete(true); }}
+                    style={{ ...s.btnPri, background: '#dc2626' }}>Delete User</button>
+                </div>
+              </div>
+            ) : (
+              <>
+                <div style={{ overflowY: 'auto', flex: 1, borderRadius: 8, border: '1px solid #e2e8f0' }}>
+                  <table style={s.table}>
+                    <thead>
+                      <tr style={{ background: '#f8fafc' }}>
+                        <th style={s.th}>Patient</th>
+                        <th style={s.th}>Date</th>
+                        <th style={s.th}>Time</th>
+                        <th style={s.th}>Status</th>
+                        <th style={s.th}></th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {apptBlockUser.appointments.map(a => (
+                        <tr key={a.id}>
+                          <td style={s.td}>{a.patient_name}</td>
+                          <td style={s.td}>{a.appointment_date}</td>
+                          <td style={s.td}>{a.appointment_time?.slice(0, 5)}</td>
+                          <td style={s.td}><span style={{ background: '#fef9c3', color: '#92400e', borderRadius: 20, padding: '2px 10px', fontSize: 11, fontWeight: 600, textTransform: 'capitalize' }}>{a.status}</span></td>
+                          <td style={s.td}>
+                            <button onClick={() => cancelUserAppt(a.id)}
+                              style={{ border: '1px solid #fecaca', background: '#fef2f2', color: '#b91c1c', borderRadius: 6, padding: '5px 12px', cursor: 'pointer', fontSize: 12, fontWeight: 600 }}>
+                              Cancel
+                            </button>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+                <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: 16 }}>
+                  <button onClick={() => setApptBlockUser(null)} style={s.btnSec}>Close</button>
+                </div>
+              </>
+            )}
           </div>
         </div>
       )}
