@@ -13,7 +13,7 @@ const attachUsers = async (doctors) => {
 const getDoctors = async (req, res) => {
   try {
     const { specialty } = req.query;
-    let query = supabase.from('doctors').select('id, user_id, specialization, consultation_fee, experience_years, is_active').neq('is_active', false);
+    let query = supabase.from('doctors').select('id, user_id, specialization, consultation_fee, experience_years, is_active');
     if (specialty) query = query.ilike('specialization', `%${specialty}%`);
     const { data, error } = await query;
     if (error) throw error;
@@ -59,12 +59,35 @@ const createDoctor = async (req, res) => {
   }
 };
 
-// DELETE /doctors/:id  (soft delete — preserves appointment history)
+// DELETE /doctors/:id
 const deleteDoctor = async (req, res) => {
   try {
-    const { error } = await supabase.from('doctors').update({ is_active: false }).eq('id', req.params.id);
+    const id = req.params.id;
+    const { data: appts, error: apptErr } = await supabase
+      .from('appointments')
+      .select('id, appointment_date, appointment_time, status, patient_id')
+      .eq('doctor_id', id)
+      .not('status', 'in', '("cancelled","completed")');
+    if (apptErr) throw apptErr;
+    if (appts && appts.length > 0) {
+      const patientIds = [...new Set(appts.map(a => a.patient_id).filter(Boolean))];
+      const { data: patients } = await supabase.from('patients').select('id, user_id').in('id', patientIds);
+      const userIds = (patients || []).map(p => p.user_id).filter(Boolean);
+      const { data: users } = await supabase.from('users').select('id, first_name, last_name').in('id', userIds);
+      const userMap = {};
+      (users || []).forEach(u => { userMap[u.id] = u; });
+      const patMap = {};
+      (patients || []).forEach(p => { patMap[p.id] = userMap[p.user_id] || null; });
+      const appointments = appts.map(a => ({
+        id: a.id, appointment_date: a.appointment_date,
+        appointment_time: a.appointment_time, status: a.status,
+        patient_name: patMap[a.patient_id] ? `${patMap[a.patient_id].first_name} ${patMap[a.patient_id].last_name}` : 'Unknown Patient'
+      }));
+      return res.status(409).json({ error: 'Doctor has active appointments', appointments });
+    }
+    const { error } = await supabase.from('doctors').delete().eq('id', id);
     if (error) throw error;
-    return res.status(200).json({ message: 'Doctor deactivated' });
+    return res.status(200).json({ message: 'Doctor deleted' });
   } catch (err) {
     console.error('deleteDoctor error:', err.message);
     return res.status(500).json({ error: err.message });
