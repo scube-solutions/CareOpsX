@@ -27,7 +27,11 @@ export default function DoctorDashboard() {
   const [labForm, setLabForm] = useState({ tests: [{ test_name: '', test_code: '' }], urgency: 'normal', notes: '' });
   const [followUpDate, setFollowUpDate]   = useState('');
   const [followUpNotes, setFollowUpNotes] = useState('');
-  const [weekAppts, setWeekAppts] = useState([]);
+  const [weekAppts, setWeekAppts]     = useState([]);
+  const [showSchedule, setShowSchedule] = useState(false);
+  const [schedDate, setSchedDate]       = useState('');
+  const [schedSlots, setSchedSlots]     = useState([]);
+  const [schedLoading, setSchedLoading] = useState(false);
 
   useEffect(() => {
     const user = getUser();
@@ -166,6 +170,30 @@ export default function DoctorDashboard() {
     } catch (e) { setMsg(e.message); } finally { setLoading(false); }
   };
 
+  const loadSchedule = async (date) => {
+    setSchedLoading(true);
+    setSchedSlots([]);
+    try {
+      const res = await api(`/doctors/me/schedule?date=${date}`);
+      setSchedSlots(res.slots || []);
+    } catch (e) { setMsg(e.message); } finally { setSchedLoading(false); }
+  };
+
+  const toggleSlot = async (date, time, currentStatus) => {
+    if (currentStatus === 'booked') return;
+    const action = currentStatus === 'blocked' ? 'unblock' : 'block';
+    try {
+      await api('/doctors/me/schedule/block', { method: 'POST', body: JSON.stringify({ date, slot_time: time, action }) });
+      await loadSchedule(date);
+    } catch (e) { setMsg(e.message); }
+  };
+
+  const schedDays = [0, 1, 2].map(offset => {
+    const d = new Date();
+    d.setDate(d.getDate() + offset);
+    return d.toISOString().split('T')[0];
+  });
+
   const waiting = queue.filter(t => t.status === 'waiting');
   const completed = queue.filter(t => t.status === 'completed').length;
 
@@ -179,11 +207,73 @@ export default function DoctorDashboard() {
         <div style={{ display: 'flex', gap: 10 }}>
           <div style={s.statBadge}><span style={{ fontSize: '1.2rem', fontWeight: 700 }}>{waiting.length}</span><span style={{ fontSize: '.7rem', color: '#64748b' }}>Waiting</span></div>
           <div style={s.statBadge}><span style={{ fontSize: '1.2rem', fontWeight: 700, color: '#10b981' }}>{completed}</span><span style={{ fontSize: '.7rem', color: '#64748b' }}>Done</span></div>
+          <button onClick={() => { setShowSchedule(v => !v); if (!schedDate) { const d = schedDays[0]; setSchedDate(d); loadSchedule(d); } }} style={{ ...s.btnSec, borderColor: showSchedule ? '#00b4a0' : undefined, color: showSchedule ? '#00b4a0' : undefined }}>📅 My Schedule</button>
           <button onClick={callNext} disabled={loading} style={s.btnPri}>{loading ? '...' : '→ Call Next'}</button>
         </div>
       </div>
 
       {msg && <div style={s.info}>{msg}<button onClick={() => setMsg('')} style={{ marginLeft: 8, background: 'none', border: 'none', cursor: 'pointer' }}>×</button></div>}
+
+      {/* ── My Schedule Panel ── */}
+      {showSchedule && (
+        <div style={{ ...s.card, marginBottom: 20, borderLeft: '4px solid #00b4a0' }}>
+          <h2 style={s.h2}>My Slot Schedule — Block / Open Slots</h2>
+          <p style={{ fontSize: '.8rem', color: '#64748b', marginBottom: 14 }}>Click a slot to block it (patients cannot book). Click blocked slot to re-open. Booked slots cannot be changed.</p>
+
+          {/* Day tabs */}
+          <div style={{ display: 'flex', gap: 8, marginBottom: 18 }}>
+            {schedDays.map((d, i) => {
+              const label = i === 0 ? 'Today' : i === 1 ? 'Tomorrow' : new Date(d + 'T00:00:00').toLocaleDateString('en-IN', { weekday: 'short', day: 'numeric', month: 'short' });
+              const active = schedDate === d;
+              return (
+                <button key={d} onClick={() => { setSchedDate(d); loadSchedule(d); }} style={{ padding: '8px 18px', borderRadius: 8, border: `2px solid ${active ? '#00b4a0' : '#e2e8f0'}`, background: active ? '#f0fdfb' : '#f8fafc', color: active ? '#0f766e' : '#64748b', fontWeight: active ? 700 : 500, cursor: 'pointer', fontSize: '.85rem' }}>
+                  {label}<div style={{ fontSize: '.7rem', fontWeight: 400 }}>{d}</div>
+                </button>
+              );
+            })}
+          </div>
+
+          {/* Legend */}
+          <div style={{ display: 'flex', gap: 16, marginBottom: 14, fontSize: '.75rem', color: '#64748b' }}>
+            {[['#f0fdfb','#00b4a0','Available (click to block)'],['#fef2f2','#b91c1c','Blocked (click to open)'],['#eff6ff','#1d4ed8','Booked by patient']].map(([bg,col,lbl]) => (
+              <span key={lbl} style={{ display: 'flex', alignItems: 'center', gap: 5 }}>
+                <span style={{ width: 14, height: 14, borderRadius: 4, background: bg, border: `2px solid ${col}`, display: 'inline-block' }} />{lbl}
+              </span>
+            ))}
+          </div>
+
+          {schedLoading ? (
+            <div style={{ textAlign: 'center', padding: 32, color: '#94a3b8' }}>Loading slots…</div>
+          ) : schedSlots.length === 0 ? (
+            <div style={{ textAlign: 'center', padding: 32, color: '#94a3b8' }}>No slots for this day. Check availability config in admin panel.</div>
+          ) : (
+            <>
+              <div style={{ fontSize: '.8rem', color: '#64748b', marginBottom: 10 }}>
+                <strong style={{ color: '#0f766e' }}>{schedSlots.filter(s => s.status === 'available').length}</strong> available ·{' '}
+                <strong style={{ color: '#b91c1c' }}>{schedSlots.filter(s => s.status === 'blocked').length}</strong> blocked ·{' '}
+                <strong style={{ color: '#1d4ed8' }}>{schedSlots.filter(s => s.status === 'booked').length}</strong> booked
+              </div>
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(6, 1fr)', gap: 8 }}>
+                {schedSlots.map(slot => {
+                  const cfg = {
+                    available: { bg: '#f0fdfb', border: '#00b4a0', color: '#0f766e', cursor: 'pointer' },
+                    blocked:   { bg: '#fef2f2', border: '#fca5a5', color: '#b91c1c', cursor: 'pointer' },
+                    booked:    { bg: '#eff6ff', border: '#93c5fd', color: '#1d4ed8', cursor: 'not-allowed' },
+                  }[slot.status] || {};
+                  const patName = slot.patient ? `${slot.patient.first_name || ''} ${slot.patient.last_name || ''}`.trim() : '';
+                  return (
+                    <button key={slot.time} onClick={() => toggleSlot(schedDate, slot.time, slot.status)} title={patName || (slot.status === 'available' ? 'Click to block' : slot.status === 'blocked' ? 'Click to unblock' : 'Booked')} style={{ padding: '10px 6px', borderRadius: 8, border: `2px solid ${cfg.border}`, background: cfg.bg, color: cfg.color, fontWeight: 600, fontSize: '.8rem', cursor: cfg.cursor, textAlign: 'center', transition: 'opacity .12s' }}>
+                      {slot.time}
+                      {slot.status === 'blocked' && <div style={{ fontSize: '.6rem', marginTop: 2 }}>BLOCKED</div>}
+                      {slot.status === 'booked' && <div style={{ fontSize: '.6rem', marginTop: 2, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{patName || 'Booked'}</div>}
+                    </button>
+                  );
+                })}
+              </div>
+            </>
+          )}
+        </div>
+      )}
 
       <div style={{ display: 'grid', gridTemplateColumns: '320px 1fr', gap: 20 }}>
         <div style={s.card}>

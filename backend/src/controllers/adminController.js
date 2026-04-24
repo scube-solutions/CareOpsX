@@ -328,6 +328,42 @@ const deleteLabTest = async (req, res) => {
   } catch (err) { return res.status(500).json({ error: err.message }); }
 };
 
+// ── Specializations ───────────────────────────────────────────────────────────
+const getSpecializations = async (req, res) => {
+  try {
+    const { data, error } = await supabase.from('specializations').select('*').order('name');
+    if (error) throw error;
+    return res.json({ specializations: data || [] });
+  } catch (err) { return res.status(500).json({ error: err.message }); }
+};
+
+const createSpecialization = async (req, res) => {
+  try {
+    const { name } = req.body;
+    if (!name?.trim()) return res.status(400).json({ error: 'name is required' });
+    const { data, error } = await supabase.from('specializations').insert([{ name: name.trim() }]).select().single();
+    if (error) throw error;
+    return res.status(201).json({ specialization: data });
+  } catch (err) { return res.status(500).json({ error: err.message }); }
+};
+
+const toggleSpecialization = async (req, res) => {
+  try {
+    const { data: cur } = await supabase.from('specializations').select('is_active').eq('id', req.params.id).single();
+    const { data, error } = await supabase.from('specializations').update({ is_active: !cur?.is_active }).eq('id', req.params.id).select().single();
+    if (error) throw error;
+    return res.json({ specialization: data });
+  } catch (err) { return res.status(500).json({ error: err.message }); }
+};
+
+const deleteSpecialization = async (req, res) => {
+  try {
+    const { error } = await supabase.from('specializations').delete().eq('id', req.params.id);
+    if (error) throw error;
+    return res.json({ message: 'Deleted' });
+  } catch (err) { return res.status(500).json({ error: err.message }); }
+};
+
 module.exports = {
   getHospitalProfile, upsertHospitalProfile,
   getBranches, createBranch, updateBranch, deleteBranch,
@@ -336,4 +372,5 @@ module.exports = {
   getDoctorLeaves, createDoctorLeave, deleteDoctorLeave,
   getUsers, createUser, updateUser, toggleUserActive, deleteUser, resetUserPassword,
   getLabTestCatalog, createLabTest, updateLabTest, deleteLabTest,
+  getSpecializations, createSpecialization, toggleSpecialization, deleteSpecialization,
 };

@@ -2,7 +2,7 @@
 import { useEffect, useState } from 'react';
 import { api } from '@/lib/api';
 
-const TABS = ['Hospital Profile', 'Branches', 'Departments', 'Users', 'Lab Tests'];
+const TABS = ['Hospital Profile', 'Branches', 'Departments', 'Users', 'Lab Tests', 'Specializations'];
 
 export default function SetupPage() {
   const [tab, setTab] = useState(0);
@@ -15,26 +15,51 @@ export default function SetupPage() {
   const [msg, setMsg] = useState('');
   const [loading, setLoading] = useState(false);
   const [selectedUser, setSelectedUser] = useState(null);
+  const [editingUser, setEditingUser] = useState(null);
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [labTests, setLabTests] = useState([]);
   const [labTestForm, setLabTestForm] = useState({ test_name: '', test_code: '', category: '', fee: '', description: '' });
   const [editingLabTest, setEditingLabTest] = useState(null);
+  const [specializations, setSpecializations] = useState([]);
+  const [specName, setSpecName] = useState('');
 
   const loadAll = async () => {
     try {
-      const [p, b, d, u, lt] = await Promise.all([
+      const [p, b, d, u, lt, sp] = await Promise.all([
         api('/admin/hospital-profile').then(r => r.profile || {}),
         api('/admin/branches').then(r => r.branches || []),
         api('/admin/departments').then(r => r.departments || []),
         api('/admin/users').then(r => r.users || []),
         api('/admin/lab-tests').then(r => r.tests || []),
+        api('/admin/specializations').then(r => r.specializations || []),
       ]);
       setProfile(p || profile);
       setBranches(b);
       setDepartments(d);
       setUsers(u);
       setLabTests(lt);
+      setSpecializations(sp);
     } catch (e) { console.error(e); }
+  };
+
+  const addSpec = async () => {
+    if (!specName.trim()) return;
+    try {
+      await api('/admin/specializations', { method: 'POST', body: JSON.stringify({ name: specName.trim() }) });
+      setSpecName('');
+      await loadAll();
+    } catch (e) { setMsg(e.message); }
+  };
+
+  const toggleSpec = async (id) => {
+    try { await api(`/admin/specializations/${id}/toggle`, { method: 'PATCH' }); await loadAll(); }
+    catch (e) { setMsg(e.message); }
+  };
+
+  const deleteSpec = async (id) => {
+    if (!confirm('Delete this specialization?')) return;
+    try { await api(`/admin/specializations/${id}`, { method: 'DELETE' }); await loadAll(); }
+    catch (e) { setMsg(e.message); }
   };
 
   useEffect(() => { loadAll(); }, []);
@@ -82,6 +107,32 @@ export default function SetupPage() {
     try {
       await api('/admin/users', { method: 'POST', body: JSON.stringify({ ...form, role_id: selectedRoles[0], roles: selectedRoles }) });
       setMsg('User created'); setShowForm(false); setForm({});
+      await loadAll();
+    } catch (e) { setMsg(e.message); }
+  };
+
+  const startEditUser = (u) => {
+    const existingRoles = u.roles?.length ? u.roles : [u.role_id || 5];
+    setForm({
+      first_name: u.first_name || '',
+      last_name: u.last_name || '',
+      email: u.email || '',
+      phone: u.phone || '',
+      password: '',
+      roles: existingRoles,
+      role_id: existingRoles[0],
+    });
+    setEditingUser(u);
+    setShowForm(true);
+  };
+
+  const updateUser = async () => {
+    const selectedRoles = form.roles?.length ? form.roles : [form.role_id || 5];
+    try {
+      const payload = { first_name: form.first_name, last_name: form.last_name, email: form.email, phone: form.phone, role_id: selectedRoles[0], roles: selectedRoles };
+      if (form.password) payload.password = form.password;
+      await api(`/admin/users/${editingUser.id}`, { method: 'PUT', body: JSON.stringify(payload) });
+      setMsg('User updated'); setShowForm(false); setForm({}); setEditingUser(null); setSelectedUser(null);
       await loadAll();
     } catch (e) { setMsg(e.message); }
   };
@@ -293,6 +344,46 @@ export default function SetupPage() {
         </div>
       )}
 
+      {/* Specializations */}
+      {tab === 5 && (
+        <div>
+          <div style={{ ...s.card, marginBottom: 16, borderLeft: '4px solid #00b4a0' }}>
+            <h2 style={s.h2}>Add Specialization</h2>
+            <div style={{ display: 'flex', gap: 10 }}>
+              <input value={specName} onChange={e => setSpecName(e.target.value)} onKeyDown={e => e.key === 'Enter' && addSpec()} placeholder="e.g. Cardiology" style={{ ...s.input, flex: 1 }} />
+              <button onClick={addSpec} style={s.btnPri}>+ Add</button>
+            </div>
+          </div>
+          <div style={s.card}>
+            {specializations.length === 0 ? (
+              <div style={{ textAlign: 'center', padding: '3rem', color: '#94a3b8' }}>No specializations yet. Add one above.</div>
+            ) : (
+              <table style={s.table}>
+                <thead><tr>{['Specialization', 'Status', 'Actions'].map(h => <th key={h} style={s.th}>{h}</th>)}</tr></thead>
+                <tbody>
+                  {specializations.map(sp => (
+                    <tr key={sp.id} style={{ borderBottom: '1px solid #f1f5f9' }}>
+                      <td style={{ ...s.td, fontWeight: 600 }}>{sp.name}</td>
+                      <td style={s.td}>
+                        <span style={{ background: sp.is_active ? '#f0fdf4' : '#fef2f2', color: sp.is_active ? '#065f46' : '#dc2626', padding: '2px 8px', borderRadius: 12, fontSize: '.75rem', fontWeight: 600 }}>
+                          {sp.is_active ? 'Active' : 'Inactive'}
+                        </span>
+                      </td>
+                      <td style={s.td}>
+                        <div style={{ display: 'flex', gap: 6 }}>
+                          <button onClick={() => toggleSpec(sp.id)} style={s.actBtn}>{sp.is_active ? 'Deactivate' : 'Activate'}</button>
+                          <button onClick={() => deleteSpec(sp.id)} style={{ ...s.actBtn, color: '#dc2626', borderColor: '#fecaca', background: '#fef2f2' }}>Delete</button>
+                        </div>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            )}
+          </div>
+        </div>
+      )}
+
       {/* Users */}
       {tab === 3 && (
         <div>
@@ -305,11 +396,16 @@ export default function SetupPage() {
                     Selected: <strong>{selectedUser.first_name} {selectedUser.last_name}</strong>
                   </span>
                   <button
+                    onClick={() => startEditUser(selectedUser)}
+                    style={{ padding: '6px 14px', background: '#eff6ff', color: '#1d4ed8', border: '1px solid #bfdbfe', borderRadius: 8, fontWeight: 600, cursor: 'pointer', fontSize: '.8rem' }}>
+                    ✏ Edit Roles
+                  </button>
+                  <button
                     onClick={() => setConfirmDelete(true)}
                     style={{ padding: '6px 14px', background: '#fef2f2', color: '#dc2626', border: '1px solid #fecaca', borderRadius: 8, fontWeight: 600, cursor: 'pointer', fontSize: '.8rem' }}>
                     🗑 Delete User
                   </button>
-                  <button onClick={() => setSelectedUser(null)} style={{ ...s.btnSec, padding: '5px 10px', fontSize: '.78rem' }}>Deselect</button>
+                  <button onClick={() => { setSelectedUser(null); setShowForm(false); setEditingUser(null); }} style={{ ...s.btnSec, padding: '5px 10px', fontSize: '.78rem' }}>Deselect</button>
                 </>
               )}
               {confirmDelete && (
@@ -322,15 +418,20 @@ export default function SetupPage() {
                 </div>
               )}
             </div>
-            <button onClick={() => { setShowForm(true); setForm({ role_id: 5 }); setSelectedUser(null); }} style={s.btnPri}>+ Add User</button>
+            <button onClick={() => { setShowForm(true); setForm({ role_id: 5 }); setSelectedUser(null); setEditingUser(null); }} style={s.btnPri}>+ Add User</button>
           </div>
 
           {showForm && (
-            <div style={{ ...s.card, marginBottom: 16, borderLeft: '4px solid #00b4a0' }}>
+            <div style={{ ...s.card, marginBottom: 16, borderLeft: `4px solid ${editingUser ? '#1d4ed8' : '#00b4a0'}` }}>
+              {editingUser && <div style={{ fontSize: '.8rem', color: '#1d4ed8', background: '#eff6ff', border: '1px solid #bfdbfe', borderRadius: 6, padding: '6px 12px', marginBottom: 14 }}>Editing: <strong>{editingUser.first_name} {editingUser.last_name}</strong></div>}
               <div style={s.grid3}>
-                {[['First Name', 'first_name'], ['Last Name', 'last_name'], ['Email', 'email'], ['Phone', 'phone'], ['Password', 'password']].map(([l, k]) => (
-                  <div key={k} style={s.fg}><label style={s.label}>{l}</label><input type={k === 'password' ? 'password' : 'text'} value={form[k] || ''} onChange={e => setForm({ ...form, [k]: e.target.value })} style={s.input} /></div>
+                {[['First Name', 'first_name'], ['Last Name', 'last_name'], ['Email', 'email'], ['Phone', 'phone']].map(([l, k]) => (
+                  <div key={k} style={s.fg}><label style={s.label}>{l}</label><input type="text" value={form[k] || ''} onChange={e => setForm({ ...form, [k]: e.target.value })} style={s.input} /></div>
                 ))}
+                <div style={s.fg}>
+                  <label style={s.label}>Password{editingUser ? ' (leave blank to keep)' : ''}</label>
+                  <input type="password" value={form.password || ''} onChange={e => setForm({ ...form, password: e.target.value })} style={s.input} placeholder={editingUser ? 'Leave blank to keep current' : ''} />
+                </div>
                 <div style={s.fg}><label style={s.label}>Roles (select one or more; first = primary login role)</label>
                   <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginTop: 4 }}>
                     {ROLE_OPTIONS.map(r => {
@@ -350,7 +451,13 @@ export default function SetupPage() {
                   </div>
                 </div>
               </div>
-              <div style={{ display: 'flex', gap: 10 }}><button onClick={createUser} style={s.btnPri}>Create User</button><button onClick={() => setShowForm(false)} style={s.btnSec}>Cancel</button></div>
+              <div style={{ display: 'flex', gap: 10 }}>
+                {editingUser
+                  ? <button onClick={updateUser} style={{ ...s.btnPri, background: '#1d4ed8' }}>Update User</button>
+                  : <button onClick={createUser} style={s.btnPri}>Create User</button>
+                }
+                <button onClick={() => { setShowForm(false); setEditingUser(null); }} style={s.btnSec}>Cancel</button>
+              </div>
             </div>
           )}
 

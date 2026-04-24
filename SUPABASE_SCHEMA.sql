@@ -549,6 +549,27 @@ CREATE TABLE IF NOT EXISTS patient_journey_log (
 -- location values: lobby, consultation_room, lab, pharmacy, billing, exit
 
 
+-- ── specializations ───────────────────────────────────────────────────────────
+-- Admin-managed list of specializations available in this org
+CREATE TABLE IF NOT EXISTS specializations (
+  id         UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+  name       TEXT NOT NULL UNIQUE,
+  is_active  BOOLEAN DEFAULT true,
+  created_at TIMESTAMPTZ DEFAULT now()
+);
+
+-- ── doctor_blocked_slots ──────────────────────────────────────────────────────
+-- Doctor can block specific time slots on specific dates (overrides recurring schedule)
+CREATE TABLE IF NOT EXISTS doctor_blocked_slots (
+  id           BIGSERIAL PRIMARY KEY,
+  doctor_id    UUID NOT NULL REFERENCES doctors(id) ON DELETE CASCADE,
+  blocked_date DATE NOT NULL,
+  blocked_time TIME NOT NULL,
+  created_by   UUID REFERENCES users(id),
+  created_at   TIMESTAMPTZ DEFAULT now(),
+  UNIQUE(doctor_id, blocked_date, blocked_time)
+);
+
 -- ============================================================
 -- INDEXES for performance
 -- ============================================================

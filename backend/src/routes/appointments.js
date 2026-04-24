@@ -6,6 +6,7 @@ const {
   getSlots,
   bookAppointment,
   getAppointments,
+  getAppointmentById,
   updateStatus,
   rescheduleAppointment
 } = require('../controllers/appointmentController');
@@ -16,10 +17,11 @@ const { verifyToken, requireRole } = require('../middlewares/auth');
 router.get('/slots', getSlots);
 
 // Appointments
-router.post('/',         verifyToken, bookAppointment);
-router.get('/',          verifyToken, getAppointments);
+router.post('/',            verifyToken, bookAppointment);
+router.get('/',             verifyToken, getAppointments);
+router.get('/:id',          verifyToken, getAppointmentById);
 router.patch('/:id/status', verifyToken, requireRole([1, 2]), updateStatus);
-router.put('/:id',       verifyToken, requireRole([1, 2]), rescheduleAppointment);
+router.put('/:id',          verifyToken, requireRole([1, 2]), rescheduleAppointment);
 
 // Doctor availability — admin only
 router.post('/doctors/:id/availability',  verifyToken, requireRole([1]), setAvailability);

@@ -19,6 +19,7 @@ const initialDoctorForm = {
 
 export default function AdminDoctorsPage() {
   const [doctors, setDoctors] = useState([]);
+  const [specializations, setSpecializations] = useState([]);
   const [loading, setLoading] = useState(true);
   const [showAddModal, setShowAddModal] = useState(false);
   const [savingDoctor, setSavingDoctor] = useState(false);
@@ -54,6 +55,7 @@ export default function AdminDoctorsPage() {
 
   useEffect(() => {
     loadDoctors();
+    api('/admin/specializations').then(r => setSpecializations((r.specializations || []).filter(s => s.is_active)));
   }, []);
 
   const doctorName = (doctor) => {
@@ -275,7 +277,7 @@ export default function AdminDoctorsPage() {
                 ['email', 'Email', 'email'],
                 ['phone', 'Phone', 'tel'],
                 ['password', 'Password', 'password'],
-                ['specialization', 'Specialization', 'text'],
+                // specialization handled separately below
                 ['consultation_fee', 'Consultation Fee', 'number'],
                 ['experience', 'Experience (years)', 'number'],
               ].map(([key, label, type]) => (
@@ -283,7 +285,7 @@ export default function AdminDoctorsPage() {
                   <label style={{ display: 'block', fontSize: 12, color: T.muted, marginBottom: 4 }}>{label}</label>
                   <input
                     type={type}
-                    required={['first_name', 'last_name', 'email', 'password', 'specialization', 'consultation_fee'].includes(key)}
+                    required={['first_name', 'last_name', 'email', 'password', 'consultation_fee'].includes(key)}
                     min={type === 'number' ? 0 : undefined}
                     value={form[key]}
                     onChange={(e) => setForm((prev) => ({ ...prev, [key]: e.target.value }))}
@@ -291,6 +293,24 @@ export default function AdminDoctorsPage() {
                   />
                 </div>
               ))}
+              {/* Specialization dropdown */}
+              <div>
+                <label style={{ display: 'block', fontSize: 12, color: T.muted, marginBottom: 4 }}>Specialization *</label>
+                <select
+                  required
+                  value={form.specialization}
+                  onChange={e => setForm(prev => ({ ...prev, specialization: e.target.value }))}
+                  style={{ width: '100%', border: `1px solid ${T.border}`, borderRadius: 8, padding: '9px 10px', fontFamily: T.body, background: '#fff' }}
+                >
+                  <option value="">-- Select specialization --</option>
+                  {specializations.map(sp => (
+                    <option key={sp.id} value={sp.name}>{sp.name}</option>
+                  ))}
+                </select>
+                {specializations.length === 0 && (
+                  <div style={{ fontSize: 11, color: '#f59e0b', marginTop: 4 }}>No specializations configured. Add them in System Setup → Specializations.</div>
+                )}
+              </div>
             </div>
 
             {formError && (
