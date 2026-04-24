@@ -85,6 +85,17 @@ const deleteDoctor = async (req, res) => {
       }));
       return res.status(409).json({ error: 'Doctor has active appointments', appointments });
     }
+    const { data: labOrders } = await supabase.from('lab_orders').select('id').eq('doctor_id', id);
+    const loIds = (labOrders || []).map(l => l.id);
+    if (loIds.length) await supabase.from('lab_results').delete().in('lab_order_id', loIds);
+    await supabase.from('prescriptions').delete().eq('doctor_id', id);
+    await supabase.from('lab_orders').delete().eq('doctor_id', id);
+    await supabase.from('consultations').delete().eq('doctor_id', id);
+    await supabase.from('follow_ups').delete().eq('doctor_id', id);
+    await supabase.from('appointments').delete().eq('doctor_id', id);
+    await supabase.from('doctor_leaves').delete().eq('doctor_id', id);
+    await supabase.from('doctor_availability').delete().eq('doctor_id', id);
+    await supabase.from('doctor_blocked_slots').delete().eq('doctor_id', id);
     const { error } = await supabase.from('doctors').delete().eq('id', id);
     if (error) throw error;
     return res.status(200).json({ message: 'Doctor deleted' });
