@@ -92,6 +92,7 @@ const deleteDoctor = async (req, res) => {
     await supabase.from('lab_orders').delete().eq('doctor_id', id);
     await supabase.from('consultations').delete().eq('doctor_id', id);
     await supabase.from('follow_ups').delete().eq('doctor_id', id);
+    await supabase.from('queue_tokens').delete().eq('doctor_id', id);
     await supabase.from('appointments').delete().eq('doctor_id', id);
     await supabase.from('doctor_leaves').delete().eq('doctor_id', id);
     await supabase.from('doctor_availability').delete().eq('doctor_id', id);
