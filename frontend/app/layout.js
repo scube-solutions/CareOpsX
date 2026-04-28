@@ -1,17 +1,4 @@
-import { Bricolage_Grotesque, Instrument_Sans } from 'next/font/google';
 import './globals.css';
-
-const bricolage = Bricolage_Grotesque({
-  subsets  : ['latin'],
-  variable : '--font-display',
-  weight   : ['400','500','600','700','800']
-});
-
-const instrument = Instrument_Sans({
-  subsets  : ['latin'],
-  variable : '--font-body',
-  weight   : ['400','500','600']
-});
 
 export const metadata = {
   title       : 'CareOpsX — Hospital Management',
@@ -20,7 +7,21 @@ export const metadata = {
 
 export default function RootLayout({ children }) {
   return (
-    <html lang="en" className={`${bricolage.variable} ${instrument.variable}`}>
+    <html lang="en">
+      <head>
+        <link rel="preconnect" href="https://fonts.googleapis.com" />
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossOrigin="anonymous" />
+        <link
+          href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,400;12..96,500;12..96,600;12..96,700;12..96,800&family=Instrument+Sans:wght@400;500;600&display=swap"
+          rel="stylesheet"
+        />
+        <style>{`
+          :root {
+            --font-display: 'Bricolage Grotesque', system-ui, sans-serif;
+            --font-body: 'Instrument Sans', system-ui, sans-serif;
+          }
+        `}</style>
+      </head>
       <body style={{ fontFamily: 'var(--font-body)', margin: 0 }}>
         {children}
       </body>
