@@ -1,5 +1,105 @@
 const supabase = require('../utils/supabase');
 
+// Full ordered cascade delete — keeps FK intact, deletes deps first
+const hardDeleteDoctor = async (sb, doctorId) => {
+  // Collect all appointment IDs for this doctor
+  const { data: appts } = await sb.from('appointments').select('id').eq('doctor_id', doctorId);
+  const apptIds = (appts || []).map(a => a.id);
+
+  // Collect all consultation IDs (by doctor_id + by appointment)
+  const consultIdSet = new Set();
+  const { data: doctorConsults } = await sb.from('consultations').select('id').eq('doctor_id', doctorId);
+  (doctorConsults || []).forEach(c => consultIdSet.add(c.id));
+  if (apptIds.length) {
+    const { data: apptConsults } = await sb.from('consultations').select('id').in('appointment_id', apptIds);
+    (apptConsults || []).forEach(c => consultIdSet.add(c.id));
+  }
+  const consultIds = [...consultIdSet];
+
+  // Collect all prescription IDs (by doctor_id + by consultation + by appointment)
+  const prescIdSet = new Set();
+  const { data: doctorPrescs } = await sb.from('prescriptions').select('id').eq('doctor_id', doctorId);
+  (doctorPrescs || []).forEach(p => prescIdSet.add(p.id));
+  if (consultIds.length) {
+    const { data: cPrescs } = await sb.from('prescriptions').select('id').in('consultation_id', consultIds);
+    (cPrescs || []).forEach(p => prescIdSet.add(p.id));
+  }
+  if (apptIds.length) {
+    const { data: aPrescs } = await sb.from('prescriptions').select('id').in('appointment_id', apptIds);
+    (aPrescs || []).forEach(p => prescIdSet.add(p.id));
+  }
+  const prescIds = [...prescIdSet];
+
+  // Collect all lab order IDs
+  const loIdSet = new Set();
+  const { data: doctorLos } = await sb.from('lab_orders').select('id').eq('doctor_id', doctorId);
+  (doctorLos || []).forEach(l => loIdSet.add(l.id));
+  if (consultIds.length) {
+    const { data: cLos } = await sb.from('lab_orders').select('id').in('consultation_id', consultIds);
+    (cLos || []).forEach(l => loIdSet.add(l.id));
+  }
+  if (apptIds.length) {
+    const { data: aLos } = await sb.from('lab_orders').select('id').in('appointment_id', apptIds);
+    (aLos || []).forEach(l => loIdSet.add(l.id));
+  }
+  const loIds = [...loIdSet];
+
+  // Collect pharmacy invoice IDs linked to this doctor's consultations or prescriptions
+  const phInvIdSet = new Set();
+  if (consultIds.length) {
+    const { data: cInvs } = await sb.from('pharmacy_invoices').select('id').in('consultation_id', consultIds);
+    (cInvs || []).forEach(i => phInvIdSet.add(i.id));
+  }
+  if (prescIds.length) {
+    const { data: pInvs } = await sb.from('pharmacy_invoices').select('id').in('prescription_id', prescIds);
+    (pInvs || []).forEach(i => phInvIdSet.add(i.id));
+  }
+  const phInvIds = [...phInvIdSet];
+
+  // Step 1: prescription_items (FK → prescriptions)
+  if (prescIds.length) await sb.from('prescription_items').delete().in('prescription_id', prescIds);
+
+  // Step 2: pharmacy_invoice_items then pharmacy_invoices (FK → consultations/prescriptions)
+  if (phInvIds.length) await sb.from('pharmacy_invoice_items').delete().in('pharmacy_invoice_id', phInvIds);
+  if (phInvIds.length) await sb.from('pharmacy_invoices').delete().in('id', phInvIds);
+
+  // Step 3: lab_results (FK → lab_orders / appointments)
+  if (loIds.length)   await sb.from('lab_results').delete().in('lab_order_id', loIds);
+  if (apptIds.length) await sb.from('lab_results').delete().in('appointment_id', apptIds);
+  await sb.from('lab_results').delete().eq('doctor_id', doctorId);
+
+  // Step 4: queue_tokens (FK → appointments)
+  if (apptIds.length) await sb.from('queue_tokens').delete().in('appointment_id', apptIds);
+  await sb.from('queue_tokens').delete().eq('doctor_id', doctorId);
+
+  // Step 5: prescriptions (FK → consultations)
+  if (prescIds.length) await sb.from('prescriptions').delete().in('id', prescIds);
+
+  // Step 6: lab_orders (FK → consultations)
+  if (loIds.length) await sb.from('lab_orders').delete().in('id', loIds);
+
+  // Step 7: NULL appointments.consultation_id to break circular FK before deleting consultations
+  if (apptIds.length) await sb.from('appointments').update({ consultation_id: null }).in('id', apptIds);
+
+  // Step 8: consultations (FK → appointments, now safe)
+  if (consultIds.length) await sb.from('consultations').delete().in('id', consultIds);
+
+  // Step 8: follow_ups
+  await sb.from('follow_ups').delete().eq('doctor_id', doctorId);
+
+  // Step 9: appointments
+  await sb.from('appointments').delete().eq('doctor_id', doctorId);
+
+  // Step 10: doctor config tables
+  await sb.from('doctor_leaves').delete().eq('doctor_id', doctorId);
+  await sb.from('doctor_availability').delete().eq('doctor_id', doctorId);
+  await sb.from('doctor_blocked_slots').delete().eq('doctor_id', doctorId);
+
+  // Step 11: finally delete doctor
+  const { error } = await sb.from('doctors').delete().eq('id', doctorId);
+  if (error) throw error;
+};
+
 const attachUsers = async (doctors) => {
   if (!doctors.length) return doctors;
   const userIds = [...new Set(doctors.map(d => d.user_id).filter(Boolean))];
@@ -59,6 +159,47 @@ const createDoctor = async (req, res) => {
   }
 };
 
+// PUT /doctors/:id
+const updateDoctor = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { first_name, last_name, email, phone, specialization, consultation_fee, experience_years } = req.body;
+
+    const { data: doctor, error: fetchErr } = await supabase.from('doctors').select('id, user_id').eq('id', id).single();
+    if (fetchErr || !doctor) return res.status(404).json({ error: 'Doctor not found' });
+
+    const userPayload = {};
+    if (first_name !== undefined) userPayload.first_name = first_name;
+    if (last_name !== undefined) userPayload.last_name = last_name;
+    if (email !== undefined) userPayload.email = email;
+    if (phone !== undefined) userPayload.phone = phone || null;
+
+    if (Object.keys(userPayload).length > 0) {
+      const { error: userErr } = await supabase.from('users').update(userPayload).eq('id', doctor.user_id);
+      if (userErr) throw userErr;
+    }
+
+    const doctorPayload = {};
+    if (specialization !== undefined) doctorPayload.specialization = specialization;
+    if (consultation_fee !== undefined) doctorPayload.consultation_fee = Number(consultation_fee);
+    if (experience_years !== undefined) doctorPayload.experience_years = experience_years !== '' ? Number(experience_years) : null;
+
+    if (Object.keys(doctorPayload).length > 0) {
+      const { error: docErr } = await supabase.from('doctors').update(doctorPayload).eq('id', id);
+      if (docErr) throw docErr;
+    }
+
+    const { data: updated, error: getErr } = await supabase
+      .from('doctors').select('id, user_id, specialization, consultation_fee, experience_years, is_active').eq('id', id).single();
+    if (getErr) throw getErr;
+    const [result] = await attachUsers([updated]);
+    return res.status(200).json({ message: 'Doctor updated', doctor: result });
+  } catch (err) {
+    console.error('updateDoctor error:', err.message);
+    return res.status(500).json({ error: err.message });
+  }
+};
+
 // DELETE /doctors/:id
 const deleteDoctor = async (req, res) => {
   try {
@@ -85,20 +226,7 @@ const deleteDoctor = async (req, res) => {
       }));
       return res.status(409).json({ error: 'Doctor has active appointments', appointments });
     }
-    const { data: labOrders } = await supabase.from('lab_orders').select('id').eq('doctor_id', id);
-    const loIds = (labOrders || []).map(l => l.id);
-    if (loIds.length) await supabase.from('lab_results').delete().in('lab_order_id', loIds);
-    await supabase.from('prescriptions').delete().eq('doctor_id', id);
-    await supabase.from('lab_orders').delete().eq('doctor_id', id);
-    await supabase.from('consultations').delete().eq('doctor_id', id);
-    await supabase.from('follow_ups').delete().eq('doctor_id', id);
-    await supabase.from('queue_tokens').delete().eq('doctor_id', id);
-    await supabase.from('appointments').delete().eq('doctor_id', id);
-    await supabase.from('doctor_leaves').delete().eq('doctor_id', id);
-    await supabase.from('doctor_availability').delete().eq('doctor_id', id);
-    await supabase.from('doctor_blocked_slots').delete().eq('doctor_id', id);
-    const { error } = await supabase.from('doctors').delete().eq('id', id);
-    if (error) throw error;
+    await hardDeleteDoctor(supabase, id);
     return res.status(200).json({ message: 'Doctor deleted' });
   } catch (err) {
     console.error('deleteDoctor error:', err.message);
@@ -181,4 +309,4 @@ const toggleBlockSlot = async (req, res) => {
   }
 };
 
-module.exports = { getDoctors, getDoctorById, createDoctor, deleteDoctor, getDoctorSchedule, toggleBlockSlot };
+module.exports = { getDoctors, getDoctorById, createDoctor, updateDoctor, deleteDoctor, getDoctorSchedule, toggleBlockSlot };

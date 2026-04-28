@@ -49,13 +49,12 @@ export default function LobbyDisplay() {
       {/* Header */}
       <div style={ls.header}>
         <div style={ls.logo}>
-          <svg viewBox="0 0 24 24" fill="none" width="32" height="32">
-            <rect x="9" y="2" width="6" height="6" rx="1" fill="#00b4a0" opacity=".9"/>
-            <rect x="9" y="16" width="6" height="6" rx="1" fill="#00b4a0" opacity=".9"/>
-            <rect x="2" y="9" width="6" height="6" rx="1" fill="white" opacity=".6"/>
-            <rect x="16" y="9" width="6" height="6" rx="1" fill="white" opacity=".6"/>
-            <rect x="10" y="10" width="4" height="4" rx=".5" fill="#fff"/>
-          </svg>
+          <div style={{ width: 40, height: 40, background: 'linear-gradient(135deg, #1e3f85 0%, #13cfbd 100%)', borderRadius: 10, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+            <svg viewBox="0 0 24 24" fill="none" width="22" height="22">
+              <rect x="10.5" y="4" width="3" height="16" rx="1.5" fill="white"/>
+              <rect x="4" y="10.5" width="16" height="3" rx="1.5" fill="white"/>
+            </svg>
+          </div>
           <span style={ls.logoText}>CareOpsX</span>
         </div>
         <div style={ls.headerCenter}>

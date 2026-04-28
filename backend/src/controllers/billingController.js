@@ -304,4 +304,23 @@ const getReceptionPayments = async (req, res) => {
   } catch (err) { return res.status(500).json({ error: err.message }); }
 };
 
-module.exports = { getInvoices, getInvoiceById, createInvoice, recordPayment, processRefund, getPaymentRegister, getReceptionPayments };
+// ── Patient: own billing invoices ─────────────────────────────────────────────
+const getMyInvoices = async (req, res) => {
+  try {
+    const { data: patRec } = await supabase.from('patients').select('id').eq('user_id', req.user.id).single();
+    if (!patRec) return res.status(404).json({ error: 'Patient profile not found' });
+
+    const { data: invoices, error } = await supabase
+      .from('invoices')
+      .select('*, invoice_items(*), payments(*)')
+      .eq('patient_id', patRec.id)
+      .order('created_at', { ascending: false });
+
+    if (error) throw error;
+    return res.json({ invoices: invoices || [] });
+  } catch (err) {
+    return res.status(500).json({ error: err.message });
+  }
+};
+
+module.exports = { getInvoices, getInvoiceById, createInvoice, recordPayment, processRefund, getPaymentRegister, getReceptionPayments, getMyInvoices };

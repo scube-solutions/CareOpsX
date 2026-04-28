@@ -111,6 +111,7 @@
 import { useState, useEffect } from 'react';
 import { useRouter, usePathname } from 'next/navigation';
 import { getUser, clearAuth } from '@/lib/auth';
+import RoleSwitcher from '@/lib/RoleSwitcher';
 
 export const T = {
   teal:    '#00b4a0',
@@ -165,13 +166,12 @@ const Icons = {
     </svg>
   ),
   Logo: () => (
-    <svg viewBox="0 0 24 24" fill="none" width="28" height="28">
-      <rect x="9"  y="2"  width="6" height="6" rx="1" fill="white" opacity=".9"/>
-      <rect x="9"  y="16" width="6" height="6" rx="1" fill="white" opacity=".9"/>
-      <rect x="2"  y="9"  width="6" height="6" rx="1" fill="white" opacity=".6"/>
-      <rect x="16" y="9"  width="6" height="6" rx="1" fill="white" opacity=".6"/>
-      <rect x="10" y="10" width="4" height="4" rx=".5" fill="#00b4a0"/>
-    </svg>
+    <div style={{ width: 32, height: 32, background: 'linear-gradient(135deg, #1e3f85 0%, #13cfbd 100%)', borderRadius: 8, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+      <svg viewBox="0 0 24 24" fill="none" width="18" height="18">
+        <rect x="10.5" y="4" width="3" height="16" rx="1.5" fill="white"/>
+        <rect x="4" y="10.5" width="16" height="3" rx="1.5" fill="white"/>
+      </svg>
+    </div>
   ),
   Logout: () => (
     <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -211,8 +211,9 @@ const NAV_GROUPS = [
   {
     label: 'System',
     items: [
-      { href:'/admin/setup',        label:'Setup',        Icon:Icons.Staff        },
-      { href:'/admin/audit',        label:'Audit Logs',   Icon:Icons.Dashboard    },
+      { href:'/admin/setup',         label:'Setup',         Icon:Icons.Staff     },
+      { href:'/admin/notifications', label:'Notifications', Icon:Icons.Calendar  },
+      { href:'/admin/audit',         label:'Audit Logs',    Icon:Icons.Dashboard },
     ],
   },
 ];
@@ -240,9 +241,9 @@ function AdminSidebar({ collapsed, onToggle, user }) {
         {!collapsed && (
           <div>
             <div style={{ fontFamily: T.display, fontWeight: 700, color: '#fff', fontSize: 15, letterSpacing: '.3px' }}>
-              CareOps<span style={{ color: T.teal }}>X</span>
+              Care<span style={{ color: T.teal }}>OpsX</span>
             </div>
-            <div style={{ fontSize: 10, color: 'rgba(255,255,255,.3)', marginTop: 1 }}>Admin Console</div>
+            <div style={{ fontSize: 10, color: 'rgba(255,255,255,.3)', marginTop: 1, letterSpacing: '.06em', textTransform: 'uppercase' }}>Healthcare Operations</div>
           </div>
         )}
       </div>
@@ -304,6 +305,7 @@ function AdminSidebar({ collapsed, onToggle, user }) {
                 <div style={{ fontSize: 11, color: 'rgba(255,255,255,.3)' }}>Administrator</div>
               </div>
             </div>
+            <RoleSwitcher currentRole={1} />
             <button onClick={() => { clearAuth(); window.location.href = '/login'; }}
               style={{ width: '100%', padding: '8px', borderRadius: 7,
                 border: '1px solid rgba(255,255,255,.12)', background: 'transparent',
@@ -327,7 +329,8 @@ export default function AdminLayout({ children }) {
   useEffect(() => {
     const u = getUser();
     if (!u) { router.push('/login'); return; }
-    if (u.role_id !== 1) { router.push('/login'); return; }
+    const roles = Array.isArray(u.roles) && u.roles.length ? u.roles : [u.role_id];
+    if (!roles.includes(1)) { router.push('/login'); return; }
     setUser(u);
     setReady(true);
   }, []);

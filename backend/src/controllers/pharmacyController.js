@@ -215,4 +215,126 @@ const getStockAlerts = async (req, res) => {
   }
 };
 
-module.exports = { getInventory, getMedicineById, addMedicine, updateMedicine, addStock, getPharmacyInvoices, createPharmacyInvoice, dispensePharmacyInvoice, getStockAlerts };
+// ── Patient: own pharmacy invoices ───────────────────────────────────────────
+const getMyInvoices = async (req, res) => {
+  try {
+    const { data: patRec } = await supabase.from('patients').select('id').eq('user_id', req.user.id).single();
+    if (!patRec) return res.status(404).json({ error: 'Patient profile not found' });
+
+    const { data, error } = await supabase
+      .from('pharmacy_invoices')
+      .select('*, pharmacy_invoice_items(*)')
+      .eq('patient_id', patRec.id)
+      .order('created_at', { ascending: false });
+
+    if (error) throw error;
+    return res.json({ invoices: data || [] });
+  } catch (err) {
+    return res.status(500).json({ error: err.message });
+  }
+};
+
+// ── Get Pending Prescriptions (for pharmacy to dispense) ─────────────────────
+const getPendingPrescriptions = async (req, res) => {
+  try {
+    const { data: prescriptions, error } = await supabase
+      .from('prescriptions')
+      .select('*, prescription_items(*)')
+      .order('created_at', { ascending: false })
+      .limit(100);
+
+    if (error) throw error;
+
+    const rows = prescriptions || [];
+
+    // Find which prescription IDs are already dispensed via pharmacy
+    const prescIds = rows.map(p => p.id);
+    let dispensedSet = new Set();
+    if (prescIds.length) {
+      const { data: invs } = await supabase
+        .from('pharmacy_invoices')
+        .select('prescription_id')
+        .in('prescription_id', prescIds)
+        .eq('status', 'dispensed');
+      (invs || []).forEach(i => { if (i.prescription_id) dispensedSet.add(i.prescription_id); });
+    }
+
+    const pending = rows.filter(p => !dispensedSet.has(p.id));
+
+    // Attach patient info
+    const patientIds = [...new Set(pending.map(p => p.patient_id).filter(Boolean))];
+    const patientMap = {};
+    if (patientIds.length) {
+      const { data: patients } = await supabase
+        .from('patients')
+        .select('id, first_name, last_name, patient_uid, phone')
+        .in('id', patientIds);
+      (patients || []).forEach(p => { patientMap[p.id] = p; });
+    }
+
+    // Attach doctor info
+    const doctorIds = [...new Set(pending.map(p => p.doctor_id).filter(Boolean))];
+    const doctorNameMap = {};
+    if (doctorIds.length) {
+      const { data: doctors } = await supabase.from('doctors').select('id, user_id, specialization').in('id', doctorIds);
+      const userIds = [...new Set((doctors || []).map(d => d.user_id).filter(Boolean))];
+      const userMap = {};
+      if (userIds.length) {
+        const { data: users } = await supabase.from('users').select('id, first_name, last_name').in('id', userIds);
+        (users || []).forEach(u => { userMap[u.id] = u; });
+      }
+      (doctors || []).forEach(d => {
+        const u = userMap[d.user_id];
+        doctorNameMap[d.id] = u ? `Dr. ${u.first_name} ${u.last_name}`.trim() : 'Doctor';
+      });
+    }
+
+    return res.json({
+      prescriptions: pending.map(p => ({
+        ...p,
+        patients: patientMap[p.patient_id] || null,
+        doctor_name: doctorNameMap[p.doctor_id] || 'Doctor',
+      }))
+    });
+  } catch (err) {
+    return res.status(500).json({ error: err.message });
+  }
+};
+
+// ── Bulk Import Medicines ─────────────────────────────────────────────────────
+const bulkImportMedicines = async (req, res) => {
+  try {
+    const { medicines } = req.body;
+    if (!Array.isArray(medicines) || !medicines.length)
+      return res.status(400).json({ error: 'medicines array required' });
+
+    const rows = medicines
+      .map(m => ({
+        medicine_name:  (m.medicine_name || '').trim(),
+        category:       (m.category || '').trim() || null,
+        unit:           (m.unit || 'tablet').trim(),
+        unit_price:     parseFloat(m.unit_price)    || 0,
+        current_stock:  parseInt(m.current_stock)   || 0,
+        reorder_level:  parseInt(m.reorder_level)   || 10,
+        batch_number:   (m.batch_number || '').trim() || null,
+        expiry_date:    (m.expiry_date || '').trim()  || null,
+        manufacturer:   (m.manufacturer || '').trim() || null,
+        is_active:      true,
+        created_by:     req.user.id,
+        created_at:     new Date().toISOString(),
+      }))
+      .filter(m => m.medicine_name);
+
+    if (!rows.length) return res.status(400).json({ error: 'No valid rows found — medicine_name is required' });
+
+    const { data, error } = await supabase.from('pharmacy_inventory').insert(rows).select('id, medicine_name');
+    if (error) throw error;
+
+    await auditLog({ user_id: req.user.id, role_id: req.user.role_id, action: 'BULK_IMPORT_MEDICINES', module: 'Pharmacy', entity_type: 'pharmacy_inventory', new_data: { count: data.length } });
+    return res.json({ message: `${data.length} medicine${data.length !== 1 ? 's' : ''} imported successfully`, count: data.length });
+  } catch (err) {
+    return res.status(500).json({ error: err.message });
+  }
+};
+
+module.exports = { getInventory, getMedicineById, addMedicine, updateMedicine, addStock, getPharmacyInvoices, createPharmacyInvoice, dispensePharmacyInvoice, getStockAlerts, getPendingPrescriptions, bulkImportMedicines, getMyInvoices };

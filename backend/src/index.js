@@ -3,8 +3,8 @@ const cors    = require('cors');
 require('dotenv').config();
 
 const app = express();
-app.use(cors());
-app.use(express.json({ limit: '20mb' }));
+app.use(cors({ origin: process.env.FRONTEND_URL || 'http://localhost:3000', credentials: true }));
+app.use(express.json({ limit: '2mb' }));
 
 // ── Core Routes ───────────────────────────────────────────────────────────────
 app.use('/auth',          require('./routes/auth'));

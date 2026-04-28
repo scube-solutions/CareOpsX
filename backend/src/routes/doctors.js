@@ -1,6 +1,6 @@
 const express = require('express');
 const router = express.Router();
-const { getDoctors, getDoctorById, createDoctor, deleteDoctor, getDoctorSchedule, toggleBlockSlot } = require('../controllers/doctorController');
+const { getDoctors, getDoctorById, createDoctor, updateDoctor, deleteDoctor, getDoctorSchedule, toggleBlockSlot } = require('../controllers/doctorController');
 const { setAvailability, getAvailability } = require('../controllers/appointmentController');
 const { verifyToken, requireRole } = require('../middlewares/auth');
 
@@ -21,7 +21,8 @@ router.get('/', getDoctors);
 router.get('/:id', getDoctorById);
 
 // Admin-only endpoints for creating and deleting doctor profiles
-router.post('/',    verifyToken, requireRole([1]), createDoctor);
+router.post('/',      verifyToken, requireRole([1]), createDoctor);
+router.put('/:id',    verifyToken, requireRole([1]), updateDoctor);
 router.delete('/:id', verifyToken, requireRole([1]), deleteDoctor);
 
 // Availability management (admin only)

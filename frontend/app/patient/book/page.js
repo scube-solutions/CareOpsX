@@ -624,14 +624,13 @@ export default function BookAppointment() {
           {step < 7 && <div style={{ color: T.muted, fontSize: 12 }}>Step {step + 1} of {STEPS.length}</div>}
         </div>
         {/* CareOpsX logo */}
-        <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 6 }}>
-          <svg viewBox="0 0 24 24" fill="none" width="22" height="22">
-            <rect x="9" y="2" width="6" height="6" rx="1" fill={T.teal} opacity=".8"/>
-            <rect x="9" y="16" width="6" height="6" rx="1" fill={T.teal} opacity=".8"/>
-            <rect x="2" y="9" width="6" height="6" rx="1" fill={T.teal} opacity=".5"/>
-            <rect x="16" y="9" width="6" height="6" rx="1" fill={T.teal} opacity=".5"/>
-            <rect x="10" y="10" width="4" height="4" rx=".5" fill={T.teal}/>
-          </svg>
+        <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 8 }}>
+          <div style={{ width: 30, height: 30, background: 'linear-gradient(135deg, #1e3f85 0%, #13cfbd 100%)', borderRadius: 7, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+            <svg viewBox="0 0 24 24" fill="none" width="16" height="16">
+              <rect x="10.5" y="4" width="3" height="16" rx="1.5" fill="white"/>
+              <rect x="4" y="10.5" width="16" height="3" rx="1.5" fill="white"/>
+            </svg>
+          </div>
           <span style={{ fontFamily: T.display, fontWeight: 700, fontSize: 15, color: T.navy }}>CareOps<span style={{ color: T.teal }}>X</span></span>
         </div>
       </header>
