@@ -2,6 +2,20 @@
 import { useState } from 'react';
 import { api } from '@/lib/api';
 
+const Field = ({ label, name, type = 'text', required, options, value, onChange }) => (
+  <div style={s.fg}>
+    <label style={s.label}>{label}{required && <span style={{ color: '#ef4444' }}> *</span>}</label>
+    {options ? (
+      <select name={name} value={value} onChange={onChange} style={s.input}>
+        <option value="">Select {label}</option>
+        {options.map(o => <option key={o} value={o}>{o}</option>)}
+      </select>
+    ) : (
+      <input type={type} name={name} value={value} onChange={onChange} style={s.input} />
+    )}
+  </div>
+);
+
 export default function NewPatientPage() {
   const [form, setForm] = useState({ first_name: '', last_name: '', gender: '', date_of_birth: '', phone: '', alternate_phone: '', email: '', address_line_1: '', address_line_2: '', city: '', state: '', postal_code: '', blood_group: '', allergies: '', existing_conditions: '', chronic_disease_tag: '', emergency_contact_name: '', emergency_contact_relationship: '', emergency_contact_phone: '' });
   const [duplicates, setDuplicates] = useState([]);
@@ -33,20 +47,6 @@ export default function NewPatientPage() {
       setTimeout(() => window.location.href = `/receptionist/patients/${data.patient.id}`, 1500);
     } catch (e) { setError(e.message); } finally { setLoading(false); }
   };
-
-  const Field = ({ label, name, type = 'text', required, options }) => (
-    <div style={s.fg}>
-      <label style={s.label}>{label}{required && <span style={{ color: '#ef4444' }}> *</span>}</label>
-      {options ? (
-        <select name={name} value={form[name]} onChange={handle} style={s.input}>
-          <option value="">Select {label}</option>
-          {options.map(o => <option key={o} value={o}>{o}</option>)}
-        </select>
-      ) : (
-        <input type={type} name={name} value={form[name]} onChange={handle} style={s.input} />
-      )}
-    </div>
-  );
 
   return (
     <div style={s.page}>
@@ -92,31 +92,31 @@ export default function NewPatientPage() {
       <div style={s.card}>
         <h2 style={s.h2}>Personal Information</h2>
         <div style={s.grid3}>
-          <Field label="First Name" name="first_name" required />
-          <Field label="Last Name" name="last_name" />
-          <Field label="Gender" name="gender" options={['Male', 'Female', 'Other']} required />
-          <Field label="Date of Birth" name="date_of_birth" type="date" />
-          <Field label="Phone" name="phone" type="tel" required />
-          <Field label="Alternate Phone" name="alternate_phone" type="tel" />
-          <Field label="Email" name="email" type="email" />
-          <Field label="Blood Group" name="blood_group" options={['A+', 'A-', 'B+', 'B-', 'AB+', 'AB-', 'O+', 'O-']} />
-          <Field label="Chronic Disease Tag" name="chronic_disease_tag" />
+          <Field label="First Name" name="first_name" required value={form.first_name} onChange={handle} />
+          <Field label="Last Name" name="last_name" value={form.last_name} onChange={handle} />
+          <Field label="Gender" name="gender" options={['Male', 'Female', 'Other']} required value={form.gender} onChange={handle} />
+          <Field label="Date of Birth" name="date_of_birth" type="date" value={form.date_of_birth} onChange={handle} />
+          <Field label="Phone" name="phone" type="tel" required value={form.phone} onChange={handle} />
+          <Field label="Alternate Phone" name="alternate_phone" type="tel" value={form.alternate_phone} onChange={handle} />
+          <Field label="Email" name="email" type="email" value={form.email} onChange={handle} />
+          <Field label="Blood Group" name="blood_group" options={['A+', 'A-', 'B+', 'B-', 'AB+', 'AB-', 'O+', 'O-']} value={form.blood_group} onChange={handle} />
+          <Field label="Chronic Disease Tag" name="chronic_disease_tag" value={form.chronic_disease_tag} onChange={handle} />
         </div>
 
         <h2 style={{ ...s.h2, marginTop: 24 }}>Address</h2>
         <div style={s.grid3}>
-          <div style={{ gridColumn: 'span 2' }}><Field label="Address Line 1" name="address_line_1" /></div>
-          <Field label="Address Line 2" name="address_line_2" />
-          <Field label="City" name="city" />
-          <Field label="State" name="state" />
-          <Field label="Postal Code" name="postal_code" />
+          <div style={{ gridColumn: 'span 2' }}><Field label="Address Line 1" name="address_line_1" value={form.address_line_1} onChange={handle} /></div>
+          <Field label="Address Line 2" name="address_line_2" value={form.address_line_2} onChange={handle} />
+          <Field label="City" name="city" value={form.city} onChange={handle} />
+          <Field label="State" name="state" value={form.state} onChange={handle} />
+          <Field label="Postal Code" name="postal_code" value={form.postal_code} onChange={handle} />
         </div>
 
         <h2 style={{ ...s.h2, marginTop: 24 }}>Emergency Contact</h2>
         <div style={s.grid3}>
-          <Field label="Contact Name" name="emergency_contact_name" />
-          <Field label="Relationship" name="emergency_contact_relationship" />
-          <Field label="Contact Phone" name="emergency_contact_phone" type="tel" />
+          <Field label="Contact Name" name="emergency_contact_name" value={form.emergency_contact_name} onChange={handle} />
+          <Field label="Relationship" name="emergency_contact_relationship" value={form.emergency_contact_relationship} onChange={handle} />
+          <Field label="Contact Phone" name="emergency_contact_phone" type="tel" value={form.emergency_contact_phone} onChange={handle} />
         </div>
 
         <h2 style={{ ...s.h2, marginTop: 24 }}>Medical Info</h2>
