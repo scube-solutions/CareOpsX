@@ -198,9 +198,12 @@ const deleteDoctorLeave = async (req, res) => {
 // ── Users Management ──────────────────────────────────────────────────────────
 const getUsers = async (req, res) => {
   try {
-    const { data, error } = await supabase.from('users').select('id, first_name, last_name, email, phone, role_id, is_active, branch_id, created_at').order('created_at', { ascending: false });
+    const { data, error } = await supabase.from('users').select('id, first_name, last_name, email, phone, role_id, roles, is_active, branch_id, created_at').order('created_at', { ascending: false });
     if (error) throw error;
-    const usersWithRoles = (data || []).map(u => ({ ...u, roles: [u.role_id] }));
+    const usersWithRoles = (data || []).map(u => ({
+      ...u,
+      roles: Array.isArray(u.roles) && u.roles.length ? u.roles : [u.role_id],
+    }));
     return res.json({ users: usersWithRoles });
   } catch (err) {
     return res.status(500).json({ error: err.message });
@@ -216,7 +219,8 @@ const createUser = async (req, res) => {
     if (existing) return res.status(409).json({ error: 'Email already exists' });
     const password_hash = await bcrypt.hash(password, 10);
     const primaryRole = role_id || (Array.isArray(roles) && roles[0]) || 5;
-    const { data, error } = await supabase.from('users').insert([{ first_name, last_name, email, phone: phone || null, password_hash, role_id: primaryRole, branch_id: branch_id || null, is_active: true, created_by: req.user.id }]).select('id, first_name, last_name, email, phone, role_id, is_active, branch_id, created_at').single();
+    const userRoles = Array.isArray(roles) && roles.length ? roles : [primaryRole];
+    const { data, error } = await supabase.from('users').insert([{ first_name, last_name, email, phone: phone || null, password_hash, role_id: primaryRole, roles: userRoles, branch_id: branch_id || null, is_active: true, created_by: req.user.id }]).select('id, first_name, last_name, email, phone, role_id, roles, is_active, branch_id, created_at').single();
     if (error) throw error;
     await auditLog({ user_id: req.user.id, role_id: req.user.role_id, action: 'CREATE_USER', module: 'Admin', entity_type: 'user', entity_id: data.id });
     return res.status(201).json({ message: 'User created', user: data });
@@ -229,12 +233,15 @@ const updateUser = async (req, res) => {
   try {
     const { password, roles, ...rest } = req.body;
     let payload = { ...rest, updated_by: req.user.id, updated_at: new Date().toISOString() };
-    if (Array.isArray(roles) && roles.length > 0) payload.role_id = roles[0];
+    if (Array.isArray(roles) && roles.length > 0) {
+      payload.role_id = roles[0];
+      payload.roles = roles;
+    }
     if (password) {
       const bcrypt = require('bcryptjs');
       payload.password_hash = await bcrypt.hash(password, 10);
     }
-    const { data, error } = await supabase.from('users').update(payload).eq('id', req.params.id).select('id, first_name, last_name, email, phone, role_id, is_active, branch_id').single();
+    const { data, error } = await supabase.from('users').update(payload).eq('id', req.params.id).select('id, first_name, last_name, email, phone, role_id, roles, is_active, branch_id').single();
     if (error) throw error;
     await auditLog({ user_id: req.user.id, role_id: req.user.role_id, action: 'UPDATE_USER', module: 'Admin', entity_type: 'user', entity_id: req.params.id });
     return res.json({ message: 'User updated', user: data });
@@ -257,19 +264,28 @@ const toggleUserActive = async (req, res) => {
 };
 
 const cascadeDeleteDoctor = async (doctorId) => {
-  const { data: labOrders } = await supabase.from('lab_orders').select('id').eq('doctor_id', doctorId);
+  const sb = supabase;
+  const { data: appts } = await sb.from('appointments').select('id').eq('doctor_id', doctorId);
+  const apptIds = (appts || []).map(a => a.id);
+  const { data: labOrders } = await sb.from('lab_orders').select('id').eq('doctor_id', doctorId);
   const loIds = (labOrders || []).map(l => l.id);
-  if (loIds.length) await supabase.from('lab_results').delete().in('lab_order_id', loIds);
-  await supabase.from('prescriptions').delete().eq('doctor_id', doctorId);
-  await supabase.from('lab_orders').delete().eq('doctor_id', doctorId);
-  await supabase.from('consultations').delete().eq('doctor_id', doctorId);
-  await supabase.from('follow_ups').delete().eq('doctor_id', doctorId);
-  await supabase.from('queue_tokens').delete().eq('doctor_id', doctorId);
-  await supabase.from('appointments').delete().eq('doctor_id', doctorId);
-  await supabase.from('doctor_leaves').delete().eq('doctor_id', doctorId);
-  await supabase.from('doctor_availability').delete().eq('doctor_id', doctorId);
-  await supabase.from('doctor_blocked_slots').delete().eq('doctor_id', doctorId);
-  const { error } = await supabase.from('doctors').delete().eq('id', doctorId);
+  if (loIds.length)  await sb.from('lab_results').delete().in('lab_order_id', loIds);
+  if (apptIds.length) await sb.from('lab_results').delete().in('appointment_id', apptIds).not('appointment_id', 'is', null);
+  await sb.from('lab_results').delete().eq('doctor_id', doctorId);
+  if (apptIds.length) await sb.from('queue_tokens').delete().in('appointment_id', apptIds);
+  await sb.from('queue_tokens').delete().eq('doctor_id', doctorId);
+  if (apptIds.length) await sb.from('prescriptions').delete().in('appointment_id', apptIds);
+  await sb.from('prescriptions').delete().eq('doctor_id', doctorId);
+  if (apptIds.length) await sb.from('lab_orders').delete().in('appointment_id', apptIds);
+  await sb.from('lab_orders').delete().eq('doctor_id', doctorId);
+  if (apptIds.length) await sb.from('consultations').delete().in('appointment_id', apptIds);
+  await sb.from('consultations').delete().eq('doctor_id', doctorId);
+  await sb.from('follow_ups').delete().eq('doctor_id', doctorId);
+  await sb.from('appointments').delete().eq('doctor_id', doctorId);
+  await sb.from('doctor_leaves').delete().eq('doctor_id', doctorId);
+  await sb.from('doctor_availability').delete().eq('doctor_id', doctorId);
+  await sb.from('doctor_blocked_slots').delete().eq('doctor_id', doctorId);
+  const { error } = await sb.from('doctors').delete().eq('id', doctorId);
   if (error) throw error;
 };
 

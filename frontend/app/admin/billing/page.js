@@ -388,13 +388,21 @@ export default function AdminBillingPage() {
                           </span>
                         </td>
                         <td style={{ padding: '12px 14px', borderBottom: `1px solid ${T.border}` }}>
-                          {isPaid ? (
-                            <span style={{ color: T.muted }}>�</span>
-                          ) : (
-                            <button onClick={() => openRecordPayment(inv)} style={{ border: `1px solid ${T.border}`, background: '#fff', color: T.text, borderRadius: 8, padding: '6px 10px', cursor: 'pointer', fontSize: 12 }}>
-                              Record payment
+                          <div style={{ display: 'flex', gap: 6 }}>
+                            {!isPaid && (
+                              <button onClick={() => openRecordPayment(inv)} style={{ border: `1px solid ${T.border}`, background: '#fff', color: T.text, borderRadius: 8, padding: '6px 10px', cursor: 'pointer', fontSize: 12 }}>
+                                Record payment
+                              </button>
+                            )}
+                            <button onClick={() => {
+                              const w = window.open('', '_blank');
+                              const patName = `${inv.patients?.first_name || ''} ${inv.patients?.last_name || ''}`.trim() || 'Patient';
+                              w.document.write(`<html><head><title>Invoice ${inv.invoice_number || inv.id}</title><style>body{font-family:sans-serif;padding:32px;max-width:600px;margin:0 auto}h2{color:#0f1f3d}table{width:100%;border-collapse:collapse}td,th{padding:8px 12px;border:1px solid #e2e8f0;text-align:left}.tot{font-weight:700;font-size:1.1em}</style></head><body><h2>CareOpsX — Invoice</h2><p><b>Invoice #:</b> ${inv.invoice_number || inv.id}</p><p><b>Date:</b> ${(inv.created_at||'').slice(0,10)}</p><p><b>Patient:</b> ${patName}</p><p><b>Status:</b> ${inv.status||'pending'}</p><table><tr><th>Item</th><th>Amount</th></tr>${inv.consultation_fee?`<tr><td>Consultation Fee</td><td>Rs ${Number(inv.consultation_fee).toFixed(2)}</td></tr>`:''}${inv.medicine_amount?`<tr><td>Medicines</td><td>Rs ${Number(inv.medicine_amount).toFixed(2)}</td></tr>`:''}${inv.test_amount?`<tr><td>Lab Tests</td><td>Rs ${Number(inv.test_amount).toFixed(2)}</td></tr>`:''}${inv.discount?`<tr><td>Discount</td><td>- Rs ${Number(inv.discount).toFixed(2)}</td></tr>`:''}<tr class="tot"><td>Total</td><td>Rs ${Number(inv.total_amount||0).toFixed(2)}</td></tr></table></body></html>`);
+                              w.document.close(); w.print();
+                            }} style={{ border: `1px solid ${T.border}`, background: '#fff', color: '#0f1f3d', borderRadius: 8, padding: '6px 10px', cursor: 'pointer', fontSize: 12 }}>
+                              Print
                             </button>
-                          )}
+                          </div>
                         </td>
                       </tr>
                     );

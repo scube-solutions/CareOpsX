@@ -1,4 +1,5 @@
-const supabase = require('../utils/supabase');
+const crypto   = require('crypto');
+const supabase  = require('../utils/supabase');
 const { notifyBookingConfirmed, notifyBookingCancelled } = require('../utils/notify');
 
 const toDbDateTime = (date, time) => {
@@ -20,8 +21,8 @@ const toHHMM = (value) => {
 ───────────────────────────────────────── */
 const generateBookingId = () => {
   const year   = new Date().getFullYear();
-  const random = Math.floor(1000 + Math.random() * 9000);
-  return `CX-${year}-${random}`;
+  const suffix = crypto.randomBytes(3).toString('hex').toUpperCase();
+  return `CX-${year}-${suffix}`;
 };
 
 /* ─────────────────────────────────────────
@@ -227,7 +228,12 @@ const bookAppointment = async (req, res) => {
       .select()
       .single();
 
-    if (error) throw error;
+    if (error) {
+      if (error.code === '23505') {
+        return res.status(409).json({ error: 'This slot is already booked. Please choose another.' });
+      }
+      throw error;
+    }
 
     // Fire-and-forget notifications
     const [patientRes, doctorRes] = await Promise.all([
@@ -276,18 +282,40 @@ const bookAppointment = async (req, res) => {
 const getAppointments = async (req, res) => {
   try {
     const { date, doctor_id, status, date_from, date_to } = req.query;
+    const limit  = Math.min(Number(req.query.limit)  || 50, 200);
+    const offset = Number(req.query.offset) || 0;
+
+    const userRoles = Array.isArray(req.user.roles) && req.user.roles.length
+      ? req.user.roles : [req.user.role_id];
+    const isAdmin   = userRoles.includes(1);
+    const isDoctor  = userRoles.includes(2) && !isAdmin;
+    const isPatient = userRoles.includes(3) && !isAdmin;
 
     let query = supabase
       .from('appointments')
       .select('*')
       .order('appointment_date', { ascending: true })
-      .order('appointment_time', { ascending: true });
+      .order('appointment_time', { ascending: true })
+      .range(offset, offset + limit - 1);
 
-    if (date)      query = query.eq('appointment_date', date);
-    if (doctor_id) query = query.eq('doctor_id', doctor_id);
-    if (status)    query = query.eq('status', status);
-    if (date_from) query = query.gte('appointment_date', date_from);
-    if (date_to)   query = query.lte('appointment_date', date_to);
+    if (isPatient) {
+      const { data: patRec, error: patErr } = await supabase
+        .from('patients').select('id').eq('user_id', req.user.id).single();
+      if (patErr || !patRec) return res.status(404).json({ error: 'Patient profile not found' });
+      query = query.eq('patient_id', patRec.id);
+    }
+
+    if (isDoctor) {
+      const { data: docRec } = await supabase
+        .from('doctors').select('id').eq('user_id', req.user.id).single();
+      if (docRec) query = query.eq('doctor_id', docRec.id);
+    }
+
+    if (date)                   query = query.eq('appointment_date', date);
+    if (doctor_id && !isDoctor) query = query.eq('doctor_id', doctor_id);
+    if (status)                 query = query.eq('status', status);
+    if (date_from)              query = query.gte('appointment_date', date_from);
+    if (date_to)                query = query.lte('appointment_date', date_to);
 
     const { data, error } = await query;
     if (error) throw error;

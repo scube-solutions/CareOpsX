@@ -45,17 +45,28 @@ export default function LoginPage() {
   };
 
   return (
-    <div style={styles.wrapper}>
+    <div style={{ ...styles.wrapper, position: 'relative' }}>
+      <a href="/" style={{ position: 'absolute', top: 24, left: 28, display: 'flex', alignItems: 'center', gap: 10, textDecoration: 'none' }}>
+        <div style={{ width: 38, height: 38, background: 'linear-gradient(135deg, #1e3f85 0%, #13cfbd 100%)', borderRadius: 10, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+          <svg viewBox="0 0 24 24" fill="none" width="18" height="18">
+            <rect x="10.5" y="4" width="3" height="16" rx="1.5" fill="white"/>
+            <rect x="4" y="10.5" width="16" height="3" rx="1.5" fill="white"/>
+          </svg>
+        </div>
+        <div>
+          <div style={{ fontFamily: "'Bricolage Grotesque', sans-serif", fontWeight: 700, fontSize: '1.1rem', color: '#0f1f3d', lineHeight: 1.1 }}>
+            Care<span style={{ color: '#00b4a0' }}>OpsX</span>
+          </div>
+          <div style={{ fontSize: '.65rem', color: '#64748b', letterSpacing: '.07em', textTransform: 'uppercase' }}>Healthcare Operations</div>
+        </div>
+      </a>
       <div style={styles.card}>
 
         {/* Logo */}
         <div style={styles.logo}>
           <svg viewBox="0 0 24 24" fill="none" width="28" height="28">
-            <rect x="9" y="2"  width="6" height="6" rx="1" fill="white" opacity=".9"/>
-            <rect x="9" y="16" width="6" height="6" rx="1" fill="white" opacity=".9"/>
-            <rect x="2" y="9"  width="6" height="6" rx="1" fill="white" opacity=".6"/>
-            <rect x="16" y="9" width="6" height="6" rx="1" fill="white" opacity=".6"/>
-            <rect x="10" y="10" width="4" height="4" rx=".5" fill="#00b4a0"/>
+            <rect x="10.5" y="4" width="3" height="16" rx="1.5" fill="white"/>
+            <rect x="4" y="10.5" width="16" height="3" rx="1.5" fill="white"/>
           </svg>
         </div>
         <h1 style={styles.title}>Welcome back</h1>
@@ -89,6 +100,10 @@ export default function LoginPage() {
           />
         </div>
 
+        <div style={{ textAlign: 'right', marginBottom: '.5rem', marginTop: '-.25rem' }}>
+          <a href="/forgot-password" style={{ ...styles.link, fontSize: '.8rem' }}>Forgot password?</a>
+        </div>
+
         {/* Submit */}
         <button
           style={{ ...styles.btn, opacity: loading ? .7 : 1 }}
@@ -114,7 +129,7 @@ const styles = {
               width:'100%', maxWidth:'420px',
               boxShadow:'0 4px 24px rgba(0,0,0,0.08)',
               border:'1px solid #e2e8f0' },
-  logo    : { width:'52px', height:'52px', background:'#0f1f3d',
+  logo    : { width:'52px', height:'52px', background:'linear-gradient(135deg, #1e3f85 0%, #13cfbd 100%)',
               borderRadius:'12px', display:'flex', alignItems:'center',
               justifyContent:'center', marginBottom:'1.25rem' },
   title   : { fontFamily:"'Bricolage Grotesque', sans-serif", fontSize:'1.6rem',

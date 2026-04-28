@@ -153,8 +153,15 @@ const notifyAppointmentReminder = async ({
   ], `reminder-${windowLabel}`);
 };
 
+const sendPasswordResetEmail = async (email, name, resetUrl) => {
+  const subject = 'Reset your CareOpsX password';
+  const text = `Hi ${name || 'there'},\n\nYou requested a password reset for your CareOpsX account.\n\nClick the link below to set a new password (valid for 1 hour):\n${resetUrl}\n\nIf you did not request this, ignore this email — your password will not change.\n\nCareOpsX Team`;
+  await sendEmail(email, subject, text);
+};
+
 module.exports = {
   notifyBookingConfirmed,
   notifyBookingCancelled,
   notifyAppointmentReminder,
+  sendPasswordResetEmail,
 };

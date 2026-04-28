@@ -33,6 +33,14 @@ export default function DoctorConsultationsPage() {
   const [showForm, setShowForm]   = useState(false);
   const [consult, setConsult]     = useState({ chief_complaint: '', symptoms: '', diagnosis: '', advice: '', notes: '', follow_up_required: false, follow_up_date: '' });
 
+  // Prescription rows inside consultation
+  const [rxItems, setRxItems]       = useState([{ medicine_name: '', dosage: '', frequency: '', duration: '', instructions: '' }]);
+  const [pharmaInventory, setPharmaInventory] = useState([]);
+  const [rxActiveRow, setRxActiveRow] = useState(null);
+  const addRxRow    = () => setRxItems(r => [...r, { medicine_name: '', dosage: '', frequency: '', duration: '', instructions: '' }]);
+  const removeRxRow = (i) => setRxItems(r => r.filter((_, idx) => idx !== i));
+  const updateRx    = (i, field, val) => setRxItems(r => r.map((row, idx) => idx === i ? { ...row, [field]: val } : row));
+
   // Lab form
   const [showLabForm, setShowLabForm] = useState(false);
   const [labForm, setLabForm]         = useState({ tests: [{ test_name: '', test_code: '' }], urgency: 'normal', notes: '' });
@@ -52,6 +60,7 @@ export default function DoctorConsultationsPage() {
       if (myDoc) setDoctorId(myDoc.id);
     });
     api('/lab/test-catalog').then(d => setTestCatalog(d.tests || [])).catch(() => {});
+    api('/pharmacy/inventory').then(d => setPharmaInventory(d.inventory || [])).catch(() => {});
   }, []);
 
   useEffect(() => {
@@ -117,12 +126,32 @@ export default function DoctorConsultationsPage() {
     if (!consult.chief_complaint) { setMsg('Chief complaint is required'); return; }
     setSaving(true);
     try {
-      await api('/consultations', {
+      const patient_id = selected.patients?.id || selected.patient_id;
+      const result = await api('/consultations', {
         method: 'POST',
-        body: JSON.stringify({ patient_id: selected.patients?.id || selected.patient_id, appointment_id: selected.id, doctor_id: doctorId, ...consult }),
+        body: JSON.stringify({ patient_id, appointment_id: selected.id, doctor_id: doctorId, ...consult }),
       });
-      setMsg('Consultation saved successfully');
+      const consultationId = result.consultation?.id;
+
+      // Save prescription if any medicine rows are filled
+      const validRx = rxItems.filter(r => r.medicine_name.trim());
+      if (validRx.length && consultationId) {
+        await api('/consultations/prescriptions', {
+          method: 'POST',
+          body: JSON.stringify({
+            patient_id,
+            consultation_id: consultationId,
+            appointment_id: selected.id,
+            doctor_id: doctorId,
+            items: validRx,
+            notes: consult.notes || null,
+          }),
+        });
+      }
+
+      setMsg(validRx.length ? 'Consultation & prescription saved — visible in pharmacy' : 'Consultation saved successfully');
       setShowForm(false);
+      setRxItems([{ medicine_name: '', dosage: '', frequency: '', duration: '', instructions: '' }]);
       const today = new Date().toISOString().split('T')[0];
       const d = await api(`/appointments?doctor_id=${doctorId}&date_from=${today}`);
       setAppointments(d.data || []);
@@ -268,6 +297,76 @@ export default function DoctorConsultationsPage() {
                     <textarea value={consult.notes} onChange={e => setConsult({ ...consult, notes: e.target.value })}
                       style={{ ...s.input, height: 60, width: '100%', resize: 'vertical' }} />
                   </div>
+
+                  {/* ── Prescription ── */}
+                  <div style={{ marginBottom: 16, border: '1.5px solid #ccfbf1', borderRadius: 10, overflow: 'hidden' }}>
+                    <div style={{ background: '#f0fdfb', padding: '10px 14px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                      <span style={{ fontWeight: 700, fontSize: '.85rem', color: '#0f766e' }}>💊 Prescribe Medicines</span>
+                      <button type="button" onClick={addRxRow} style={{ background: '#00b4a0', color: '#fff', border: 'none', borderRadius: 6, padding: '4px 12px', fontSize: '.75rem', fontWeight: 600, cursor: 'pointer' }}>+ Add Row</button>
+                    </div>
+                    <div style={{ padding: '10px 14px', display: 'flex', flexDirection: 'column', gap: 10 }}>
+                      {rxItems.map((rx, i) => (
+                        <div key={i} style={{ display: 'grid', gridTemplateColumns: '2fr 1fr 1fr 1fr 2fr auto', gap: 6, alignItems: 'start' }}>
+
+                          {/* Medicine name — autocomplete from inventory */}
+                          <div style={{ position: 'relative' }}>
+                            <input value={rx.medicine_name}
+                              onChange={e => { updateRx(i, 'medicine_name', e.target.value); setRxActiveRow(i); }}
+                              onFocus={() => setRxActiveRow(i)}
+                              onBlur={() => setTimeout(() => setRxActiveRow(null), 160)}
+                              placeholder="Medicine name *"
+                              style={{ ...s.input, fontSize: '.8rem', padding: '.45rem .7rem', width: '100%' }} />
+                            {rxActiveRow === i && rx.medicine_name.length > 0 && (
+                              <div style={{ position: 'absolute', top: '100%', left: 0, right: 0, background: '#fff', border: '1px solid #e2e8f0', borderRadius: 8, boxShadow: '0 4px 14px rgba(0,0,0,.1)', zIndex: 200, maxHeight: 180, overflowY: 'auto' }}>
+                                {pharmaInventory.filter(m => m.medicine_name.toLowerCase().includes(rx.medicine_name.toLowerCase())).slice(0, 7).map(m => (
+                                  <div key={m.id} onMouseDown={() => { updateRx(i, 'medicine_name', m.medicine_name); setRxActiveRow(null); }}
+                                    style={{ padding: '8px 12px', cursor: 'pointer', fontSize: '.82rem', color: '#0f1f3d', borderBottom: '1px solid #f1f5f9', display: 'flex', justifyContent: 'space-between' }}>
+                                    <span>{m.medicine_name}</span>
+                                    <span style={{ color: '#94a3b8', fontSize: '.72rem' }}>{m.unit} · ₹{m.unit_price}</span>
+                                  </div>
+                                ))}
+                                {pharmaInventory.filter(m => m.medicine_name.toLowerCase().includes(rx.medicine_name.toLowerCase())).length === 0 && (
+                                  <div style={{ padding: '8px 12px', fontSize: '.8rem', color: '#94a3b8' }}>No match — will save as typed</div>
+                                )}
+                              </div>
+                            )}
+                          </div>
+
+                          {/* Dosage */}
+                          <select value={rx.dosage} onChange={e => updateRx(i, 'dosage', e.target.value)} style={{ ...s.input, fontSize: '.8rem', padding: '.45rem .5rem' }}>
+                            <option value="">Dosage</option>
+                            {['1mg','2mg','2.5mg','5mg','10mg','20mg','25mg','40mg','50mg','75mg','100mg','150mg','200mg','250mg','400mg','500mg','600mg','750mg','1g','2g'].map(d => <option key={d} value={d}>{d}</option>)}
+                          </select>
+
+                          {/* Frequency */}
+                          <select value={rx.frequency} onChange={e => updateRx(i, 'frequency', e.target.value)} style={{ ...s.input, fontSize: '.8rem', padding: '.45rem .5rem' }}>
+                            <option value="">Frequency</option>
+                            {['OD','BD','TDS','QDS','SOS','HS','Weekly','Alternate days'].map(f => <option key={f} value={f}>{f}</option>)}
+                          </select>
+
+                          {/* Duration */}
+                          <select value={rx.duration} onChange={e => updateRx(i, 'duration', e.target.value)} style={{ ...s.input, fontSize: '.8rem', padding: '.45rem .5rem' }}>
+                            <option value="">Duration</option>
+                            {['1 day','2 days','3 days','5 days','7 days','10 days','14 days','1 month','2 months','3 months','Ongoing'].map(d => <option key={d} value={d}>{d}</option>)}
+                          </select>
+
+                          {/* Instructions */}
+                          <select value={rx.instructions} onChange={e => updateRx(i, 'instructions', e.target.value)} style={{ ...s.input, fontSize: '.8rem', padding: '.45rem .5rem' }}>
+                            <option value="">Instructions</option>
+                            {['After food','Before food','With food','Empty stomach','At bedtime','Morning only','Morning & night','With water','With milk','Avoid alcohol'].map(ins => <option key={ins} value={ins}>{ins}</option>)}
+                          </select>
+
+                          {rxItems.length > 1 && (
+                            <button type="button" onClick={() => removeRxRow(i)} style={{ background: 'none', border: 'none', color: '#ef4444', cursor: 'pointer', fontSize: '1.1rem', padding: '0 4px' }}>×</button>
+                          )}
+                        </div>
+                      ))}
+                      {rxItems[0]?.medicine_name && (
+                        <div style={{ fontSize: '.75rem', color: '#0f766e', marginTop: 4 }}>✓ Prescription will be saved and visible to pharmacist on submission</div>
+                      )}
+                    </div>
+                  </div>
+
                   <div style={{ marginBottom: 16 }}>
                     <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer', fontSize: '.875rem', fontWeight: 600, color: '#475569', marginBottom: 10 }}>
                       <input type="checkbox" checked={consult.follow_up_required}

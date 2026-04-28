@@ -2,6 +2,25 @@
 import { useEffect, useState } from 'react';
 import { api } from '@/lib/api';
 
+function TopNav() {
+  return (
+    <nav style={{ background: '#0f1f3d', padding: '0 24px', height: 56, display: 'flex', alignItems: 'center', gap: 12, position: 'sticky', top: 0, zIndex: 10 }}>
+      <a href="/patient/dashboard" style={{ display: 'flex', alignItems: 'center', gap: 10, textDecoration: 'none' }}>
+        <div style={{ width: 32, height: 32, background: 'linear-gradient(135deg, #1e3f85 0%, #13cfbd 100%)', borderRadius: 8, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+          <svg viewBox="0 0 24 24" fill="none" width="16" height="16">
+            <rect x="10.5" y="4" width="3" height="16" rx="1.5" fill="white"/>
+            <rect x="4" y="10.5" width="16" height="3" rx="1.5" fill="white"/>
+          </svg>
+        </div>
+        <span style={{ fontFamily: "'Bricolage Grotesque', sans-serif", fontWeight: 700, color: '#fff', fontSize: '1rem' }}>
+          CareOps<span style={{ color: '#00b4a0' }}>X</span>
+        </span>
+      </a>
+      <a href="/patient/dashboard" style={{ marginLeft: 'auto', fontSize: '.8rem', color: 'rgba(255,255,255,.6)', textDecoration: 'none' }}>← Dashboard</a>
+    </nav>
+  );
+}
+
 export default function PatientPrescriptionsPage() {
   const [prescriptions, setPrescriptions] = useState([]);
   const [selected, setSelected]           = useState(null);
@@ -14,10 +33,17 @@ export default function PatientPrescriptionsPage() {
       .finally(() => setLoading(false));
   }, []);
 
-  if (loading) return <div style={s.center}>Loading...</div>;
+  if (loading) return (
+    <div style={{ minHeight: '100vh', background: '#f5f8fc' }}>
+      <TopNav />
+      <div style={s.center}>Loading...</div>
+    </div>
+  );
 
   return (
-    <div style={s.page}>
+    <div style={{ minHeight: '100vh', background: '#f5f8fc' }}>
+      <TopNav />
+      <div style={s.page}>
       <div style={{ marginBottom: 24 }}>
         <h1 style={s.h1}>My Prescriptions</h1>
         <p style={s.sub}>{prescriptions.length} prescription{prescriptions.length !== 1 ? 's' : ''}</p>
@@ -67,9 +93,12 @@ export default function PatientPrescriptionsPage() {
           {/* Detail panel */}
           {selected && (
             <div style={s.card}>
-              <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 16 }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
                 <h2 style={s.h2}>Prescription Details</h2>
-                <button onClick={() => setSelected(null)} style={{ background: 'none', border: 'none', color: '#94a3b8', cursor: 'pointer', fontSize: '1.2rem' }}>×</button>
+                <div style={{ display: 'flex', gap: 8 }}>
+                  <button onClick={() => window.print()} style={{ background: '#0f1f3d', color: '#fff', border: 'none', borderRadius: 7, padding: '6px 14px', fontSize: '.8rem', fontWeight: 600, cursor: 'pointer' }}>🖨 Print</button>
+                  <button onClick={() => setSelected(null)} style={{ background: 'none', border: 'none', color: '#94a3b8', cursor: 'pointer', fontSize: '1.2rem' }}>×</button>
+                </div>
               </div>
               <div style={{ marginBottom: 12, padding: '10px 12px', background: '#f8fafc', borderRadius: 8 }}>
                 <div style={{ fontWeight: 600, color: '#0f1f3d' }}>
@@ -107,6 +136,7 @@ export default function PatientPrescriptionsPage() {
           )}
         </div>
       )}
+      </div>
     </div>
   );
 }

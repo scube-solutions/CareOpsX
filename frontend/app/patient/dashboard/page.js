@@ -30,6 +30,8 @@ const NAV_ITEMS = [
   { key: 'lab',            label: 'Lab Reports',       icon: '🧪', href: '/patient/lab' },
   { key: 'prescriptions',  label: 'Prescriptions',     icon: '💊', href: '/patient/prescriptions' },
   { key: 'followups',      label: 'Follow-ups',        icon: '📅', href: '/patient/followups' },
+  { key: 'payments',       label: 'Payment History',   icon: '💳', href: '/patient/payments' },
+  { key: 'profile',        label: 'My Profile',        icon: '👤', href: '/patient/profile' },
 ];
 
 const SECTION_TITLES = {
@@ -57,19 +59,18 @@ function Sidebar({ active, onNav, user, collapsed, onToggle }) {
       flexShrink: 0,
     }}>
       <div style={{ padding: '20px 16px 16px', borderBottom: `1px solid rgba(255,255,255,.08)`, display: 'flex', alignItems: 'center', gap: 10, cursor: 'pointer' }} onClick={onToggle}>
-        <svg viewBox="0 0 24 24" fill="none" width="28" height="28" style={{ flexShrink: 0 }}>
-          <rect x="9" y="2" width="6" height="6" rx="1" fill="white" opacity=".9"/>
-          <rect x="9" y="16" width="6" height="6" rx="1" fill="white" opacity=".9"/>
-          <rect x="2" y="9" width="6" height="6" rx="1" fill="white" opacity=".6"/>
-          <rect x="16" y="9" width="6" height="6" rx="1" fill="white" opacity=".6"/>
-          <rect x="10" y="10" width="4" height="4" rx=".5" fill="#00b4a0"/>
-        </svg>
+        <div style={{ width: 36, height: 36, background: 'linear-gradient(135deg, #1e3f85 0%, #13cfbd 100%)', borderRadius: 9, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+          <svg viewBox="0 0 24 24" fill="none" width="18" height="18">
+            <rect x="10.5" y="4" width="3" height="16" rx="1.5" fill="white"/>
+            <rect x="4" y="10.5" width="16" height="3" rx="1.5" fill="white"/>
+          </svg>
+        </div>
         {!collapsed && (
           <div>
             <div style={{ fontFamily: T.display, fontWeight: 700, color: '#fff', fontSize: 15, letterSpacing: '.3px' }}>
-              CareOps<span style={{ color: T.teal }}>X</span>
+              Care<span style={{ color: T.teal }}>OpsX</span>
             </div>
-            <div style={{ fontSize: 10, color: 'rgba(255,255,255,.35)', marginTop: 1 }}>Patient Portal</div>
+            <div style={{ fontSize: 10, color: 'rgba(255,255,255,.35)', marginTop: 1, letterSpacing: '.06em', textTransform: 'uppercase' }}>Healthcare Operations</div>
           </div>
         )}
       </div>

@@ -25,9 +25,14 @@ export default function AdminDoctorsPage() {
   const [savingDoctor, setSavingDoctor] = useState(false);
   const [formError, setFormError] = useState('');
   const [form, setForm] = useState(initialDoctorForm);
-  const [deleteConfirm, setDeleteConfirm] = useState(null); // doctor to delete
+  const [deleteConfirm, setDeleteConfirm] = useState(null);
   const [deletingId, setDeletingId] = useState(null);
-  const [apptBlock, setApptBlock] = useState(null); // { doctor, appointments } when 409
+  const [apptBlock, setApptBlock] = useState(null);
+
+  const [editDoctor, setEditDoctor] = useState(null);
+  const [editForm, setEditForm] = useState({});
+  const [editSaving, setEditSaving] = useState(false);
+  const [editError, setEditError] = useState('');
 
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [activeDoctor, setActiveDoctor] = useState(null);
@@ -137,6 +142,46 @@ export default function AdminDoctorsPage() {
       setApptBlock(prev => prev ? { ...prev, appointments: prev.appointments.filter(a => a.id !== apptId) } : null);
     } catch (err) {
       alert(err.message || 'Failed to cancel appointment');
+    }
+  };
+
+  const openEditModal = (doctor) => {
+    setEditDoctor(doctor);
+    setEditError('');
+    setEditForm({
+      first_name      : doctor.users?.first_name || '',
+      last_name       : doctor.users?.last_name  || '',
+      email           : doctor.users?.email      || '',
+      phone           : doctor.users?.phone      || '',
+      specialization  : doctor.specialization    || '',
+      consultation_fee: String(doctor.consultation_fee ?? ''),
+      experience_years: String(doctor.experience_years ?? ''),
+    });
+  };
+
+  const onEditDoctor = async (e) => {
+    e.preventDefault();
+    setEditError('');
+    setEditSaving(true);
+    try {
+      await api(`/doctors/${editDoctor.id}`, {
+        method: 'PUT',
+        body: JSON.stringify({
+          first_name      : editForm.first_name.trim(),
+          last_name       : editForm.last_name.trim(),
+          email           : editForm.email.trim(),
+          phone           : editForm.phone.trim() || null,
+          specialization  : editForm.specialization.trim(),
+          consultation_fee: Number(editForm.consultation_fee),
+          experience_years: editForm.experience_years !== '' ? Number(editForm.experience_years) : null,
+        }),
+      });
+      setEditDoctor(null);
+      await loadDoctors();
+    } catch (err) {
+      setEditError(err.message || 'Failed to update doctor');
+    } finally {
+      setEditSaving(false);
     }
   };
 
@@ -270,6 +315,13 @@ export default function AdminDoctorsPage() {
                   style={{ flex: 1, border: `1px solid ${T.border}`, background: '#fff', color: T.text, borderRadius: 8, padding: '9px 11px', cursor: 'pointer', fontWeight: 600 }}
                 >
                   Availability
+                </button>
+                <button
+                  onClick={() => openEditModal(doctor)}
+                  style={{ border: `1px solid ${T.border}`, background: '#fff', color: T.text, borderRadius: 8, padding: '9px 12px', cursor: 'pointer', fontWeight: 600 }}
+                  title="Edit doctor"
+                >
+                  Edit
                 </button>
                 <button
                   onClick={() => setDeleteConfirm(doctor)}
@@ -429,6 +481,69 @@ export default function AdminDoctorsPage() {
               </>
             )}
           </div>
+        </div>
+      )}
+
+      {editDoctor && (
+        <div style={{ position: 'fixed', inset: 0, background: 'rgba(15,23,42,.36)', display: 'grid', placeItems: 'center', zIndex: 30 }}>
+          <form onSubmit={onEditDoctor} style={{ width: 'min(720px, 95vw)', background: T.card, borderRadius: 12, border: `1px solid ${T.border}`, padding: 16 }}>
+            <h3 style={{ margin: 0, fontFamily: T.display, color: T.navy, fontSize: 21 }}>Edit Doctor</h3>
+            <p style={{ margin: '5px 0 12px', color: T.muted, fontSize: 13 }}>Dr. {doctorName(editDoctor)}</p>
+
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: 10 }}>
+              {[
+                ['first_name',       'First Name',          'text'],
+                ['last_name',        'Last Name',           'text'],
+                ['email',            'Email',               'email'],
+                ['phone',            'Phone',               'tel'],
+                ['consultation_fee', 'Consultation Fee',    'number'],
+                ['experience_years', 'Experience (years)',  'number'],
+              ].map(([key, label, type]) => (
+                <div key={key}>
+                  <label style={{ display: 'block', fontSize: 12, color: T.muted, marginBottom: 4 }}>{label}</label>
+                  <input
+                    type={type}
+                    required={['first_name', 'last_name', 'email', 'consultation_fee'].includes(key)}
+                    min={type === 'number' ? 0 : undefined}
+                    value={editForm[key]}
+                    onChange={e => setEditForm(prev => ({ ...prev, [key]: e.target.value }))}
+                    style={{ width: '100%', border: `1px solid ${T.border}`, borderRadius: 8, padding: '9px 10px', fontFamily: T.body }}
+                  />
+                </div>
+              ))}
+              <div>
+                <label style={{ display: 'block', fontSize: 12, color: T.muted, marginBottom: 4 }}>Specialization *</label>
+                <select
+                  required
+                  value={editForm.specialization}
+                  onChange={e => setEditForm(prev => ({ ...prev, specialization: e.target.value }))}
+                  style={{ width: '100%', border: `1px solid ${T.border}`, borderRadius: 8, padding: '9px 10px', fontFamily: T.body, background: '#fff' }}
+                >
+                  <option value="">-- Select specialization --</option>
+                  {specializations.map(sp => (
+                    <option key={sp.id} value={sp.name}>{sp.name}</option>
+                  ))}
+                </select>
+              </div>
+            </div>
+
+            {editError && (
+              <div style={{ marginTop: 10, background: '#fef2f2', border: '1px solid #fecaca', borderRadius: 8, padding: '8px 10px', color: '#b91c1c', fontSize: 13 }}>
+                {editError}
+              </div>
+            )}
+
+            <div style={{ marginTop: 12, display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
+              <button type="button" disabled={editSaving} onClick={() => setEditDoctor(null)}
+                style={{ border: `1px solid ${T.border}`, background: '#fff', borderRadius: 8, padding: '8px 12px', cursor: 'pointer' }}>
+                Cancel
+              </button>
+              <button type="submit" disabled={editSaving}
+                style={{ border: 'none', background: T.teal, color: '#fff', borderRadius: 8, padding: '8px 12px', cursor: 'pointer' }}>
+                {editSaving ? 'Saving...' : 'Save Changes'}
+              </button>
+            </div>
+          </form>
         </div>
       )}
 

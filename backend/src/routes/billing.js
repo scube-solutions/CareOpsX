@@ -6,6 +6,9 @@ const { verifyToken, requireRole } = require('../middlewares/auth');
 const billingRoles = [verifyToken, requireRole([1, 5, 7])];
 const adminReceptionist = [verifyToken, requireRole([1, 5])];
 
+// Patient: own invoices (any authenticated user)
+router.get('/invoices/my', verifyToken, ctrl.getMyInvoices);
+
 router.get('/invoices', ...billingRoles, ctrl.getInvoices);
 router.get('/invoices/:id', ...billingRoles, ctrl.getInvoiceById);
 router.post('/invoices', ...adminReceptionist, ctrl.createInvoice);

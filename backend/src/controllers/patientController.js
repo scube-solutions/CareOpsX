@@ -171,4 +171,53 @@ const deletePatient = async (req, res) => {
   }
 };
 
-module.exports = { checkDuplicates, getPatients, getPatientById, createPatient, updatePatient, archivePatient, mergePatients, deletePatient };
+// ── Patient: get own profile ──────────────────────────────────────────────────
+const getMyProfile = async (req, res) => {
+  try {
+    const { data: patient, error } = await supabase.from('patients').select('*').eq('user_id', req.user.id).single();
+    if (error || !patient) return res.status(404).json({ error: 'Patient profile not found' });
+    const { data: user } = await supabase.from('users').select('first_name, last_name, email').eq('id', req.user.id).single();
+    return res.json({ patient: { ...patient, email: user?.email || patient.email } });
+  } catch (err) {
+    return res.status(500).json({ error: err.message });
+  }
+};
+
+// ── Patient: update own profile ───────────────────────────────────────────────
+const updateMyProfile = async (req, res) => {
+  try {
+    const { first_name, last_name, phone, date_of_birth, gender, address, blood_group, emergency_contact_name, emergency_contact_phone } = req.body;
+    const { data: patient } = await supabase.from('patients').select('id').eq('user_id', req.user.id).single();
+    if (!patient) return res.status(404).json({ error: 'Patient profile not found' });
+
+    const updates = {};
+    if (first_name !== undefined) updates.first_name = first_name;
+    if (last_name  !== undefined) updates.last_name  = last_name;
+    if (phone      !== undefined) updates.phone      = phone;
+    if (date_of_birth !== undefined) updates.date_of_birth = date_of_birth;
+    if (gender     !== undefined) updates.gender     = gender;
+    if (address    !== undefined) updates.address    = address;
+    if (blood_group !== undefined) updates.blood_group = blood_group;
+    if (emergency_contact_name  !== undefined) updates.emergency_contact_name  = emergency_contact_name;
+    if (emergency_contact_phone !== undefined) updates.emergency_contact_phone = emergency_contact_phone;
+    updates.updated_at = new Date().toISOString();
+
+    const { data, error } = await supabase.from('patients').update(updates).eq('id', patient.id).select('*').single();
+    if (error) throw error;
+
+    // Also update users.first_name / last_name if provided
+    if (first_name || last_name) {
+      const nameUpd = {};
+      if (first_name) nameUpd.first_name = first_name;
+      if (last_name)  nameUpd.last_name  = last_name;
+      await supabase.from('users').update(nameUpd).eq('id', req.user.id);
+    }
+
+    await auditLog({ user_id: req.user.id, role_id: req.user.role_id, action: 'UPDATE_MY_PROFILE', module: 'Patient', entity_type: 'patient', entity_id: patient.id });
+    return res.json({ message: 'Profile updated', patient: data });
+  } catch (err) {
+    return res.status(500).json({ error: err.message });
+  }
+};
+
+module.exports = { checkDuplicates, getPatients, getPatientById, createPatient, updatePatient, archivePatient, mergePatients, deletePatient, getMyProfile, updateMyProfile };
