@@ -180,11 +180,16 @@ function ApptCard({ appt, onClick }) {
         <span>📅 {appt.appointment_date}</span>
         <span>⏰ {appt.appointment_time}</span>
       </div>
-      {appt.booking_id && (
-        <div style={{ marginTop: 8, fontSize: 11, color: T.muted, fontFamily: 'JetBrains Mono, monospace' }}>
-          {appt.booking_id}
-        </div>
-      )}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginTop: 8 }}>
+        {appt.booking_id && (
+          <span style={{ fontSize: 11, color: T.muted, fontFamily: 'JetBrains Mono, monospace' }}>{appt.booking_id}</span>
+        )}
+        {appt.token_number && (
+          <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4, background: '#f0fdfb', border: '1px solid #99f6e4', borderRadius: 20, padding: '2px 10px', fontSize: 12, fontWeight: 700, color: '#0f766e' }}>
+            🎫 Token #{appt.token_number}
+          </span>
+        )}
+      </div>
     </div>
   );
 }
@@ -452,9 +457,16 @@ export default function PatientDashboard() {
                   <div style={{ opacity: .85, fontSize: 14 }}>
                     {upcoming[0].appointment_date} • {upcoming[0].appointment_time}
                   </div>
-                  {upcoming[0].booking_id && (
-                    <div style={{ marginTop: 8, fontFamily: 'JetBrains Mono, monospace', fontSize: 12, opacity: .7 }}>{upcoming[0].booking_id}</div>
-                  )}
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginTop: 8, flexWrap: 'wrap' }}>
+                    {upcoming[0].booking_id && (
+                      <span style={{ fontFamily: 'JetBrains Mono, monospace', fontSize: 12, opacity: .7 }}>{upcoming[0].booking_id}</span>
+                    )}
+                    {upcoming[0].token_number && (
+                      <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4, background: 'rgba(255,255,255,0.2)', borderRadius: 20, padding: '3px 12px', fontSize: 13, fontWeight: 700, color: '#fff' }}>
+                        🎫 Queue Token #{upcoming[0].token_number}
+                      </span>
+                    )}
+                  </div>
                 </div>
               )}
 
