@@ -85,7 +85,7 @@ export default function ReceptionistDashboard() {
     : (
       <table style={s.table}>
         <thead><tr style={{ background: '#f8fafc' }}>
-          {['Patient', 'Phone', 'Doctor', 'Date & Time', 'Status', 'Booking ID'].map(h => <th key={h} style={s.th}>{h}</th>)}
+          {['Token', 'Patient', 'Phone', 'Doctor', 'Date & Time', 'Status', 'Booking ID'].map(h => <th key={h} style={s.th}>{h}</th>)}
         </tr></thead>
         <tbody>
           {rows.map(a => {
@@ -94,6 +94,12 @@ export default function ReceptionistDashboard() {
             const badge   = STATUS_STYLE[a.status] || STATUS_STYLE.booked;
             return (
               <tr key={a.id} style={{ borderBottom: '1px solid #f1f5f9' }}>
+                <td style={s.td}>
+                  {a.token_number
+                    ? <span style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: 32, height: 32, borderRadius: '50%', background: '#00b4a0', color: '#fff', fontWeight: 700, fontSize: 13 }}>{a.token_number}</span>
+                    : <span style={{ color: '#cbd5e1', fontSize: 12 }}>–</span>
+                  }
+                </td>
                 <td style={s.td}><span style={{ fontWeight: 600, color: '#0f1f3d' }}>{patName}</span></td>
                 <td style={s.td}>{a.patients?.phone || '–'}</td>
                 <td style={s.td}>Dr. {docName}<div style={{ fontSize: 11, color: '#64748b' }}>{a.doctors?.specialization}</div></td>
