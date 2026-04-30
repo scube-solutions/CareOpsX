@@ -213,6 +213,15 @@ const bookAppointment = async (req, res) => {
 
     const booking_id = generateBookingId();
 
+    // Token = position in queue for this doctor on this date
+    const { count: existingCount } = await supabase
+      .from('appointments')
+      .select('id', { count: 'exact', head: true })
+      .eq('doctor_id', doctor_id)
+      .eq('appointment_date', appointment_date)
+      .in('status', ['booked', 'confirmed']);
+    const token_number = (existingCount || 0) + 1;
+
     const { data, error } = await supabase
       .from('appointments')
       .insert([{
@@ -222,6 +231,7 @@ const bookAppointment = async (req, res) => {
         appointment_time: toDbDateTime(appointment_date, appointment_time),
         reason       : reason || null,
         booking_id,
+        token_number,
         status       : 'booked',
         created_at   : new Date().toISOString()
       }])
