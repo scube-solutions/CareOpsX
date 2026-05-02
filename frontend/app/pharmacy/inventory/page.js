@@ -145,6 +145,22 @@ export default function PharmacyInventoryPage() {
     setShowScan(false); setScanBarcode(''); setScanMsg(''); setScanLoading(false); setCameraActive(false);
   };
 
+  const fetchExternalDetails = async (barcode) => {
+    try {
+      const res = await fetch(`https://world.openfoodfacts.org/api/v0/product/${barcode}.json`);
+      const data = await res.json();
+      if (data.status === 1 && data.product) {
+        const p = data.product;
+        return {
+          medicine_name: p.product_name || p.generic_name || '',
+          manufacturer:  p.brands || p.manufacturer || '',
+          category:      (p.categories_tags?.[0] || '').replace(/^en:/, ''),
+        };
+      }
+    } catch (_) {}
+    return null;
+  };
+
   const handleBarcodeDetected = async (barcode) => {
     const code = (barcode || '').trim();
     if (!code || scanningRef.current) return;
@@ -158,10 +174,21 @@ export default function PharmacyInventoryPage() {
         setShowStock(data.medicine.id);
         setMsg(`Found: ${data.medicine.medicine_name} — enter quantity to add stock`);
       } else {
+        setScanMsg('Not in inventory. Fetching details from drug database…');
+        const ext = await fetchExternalDetails(code);
         closeScan();
-        setForm({ ...EMPTY_FORM, barcode: code });
+        setForm({
+          ...EMPTY_FORM,
+          barcode:        code,
+          medicine_name:  ext?.medicine_name || '',
+          manufacturer:   ext?.manufacturer  || '',
+          category:       ext?.category      || '',
+        });
         setShowAdd(true);
-        setMsg(`Barcode not in inventory. Fill details to register new medicine.`);
+        setMsg(ext?.medicine_name
+          ? `Details fetched for barcode ${code}. Add price to complete.`
+          : `New barcode ${code}. Fill in the medicine details.`
+        );
       }
     } catch (e) {
       setScanMsg('Lookup failed: ' + e.message);
