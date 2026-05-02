@@ -345,6 +345,7 @@ const bulkImportMedicines = async (req, res) => {
         batch_number:   (m.batch_number || '').trim() || null,
         expiry_date:    (m.expiry_date || '').trim()  || null,
         manufacturer:   (m.manufacturer || '').trim() || null,
+        barcode:        (m.barcode || '').trim() || null,
         is_active:      true,
         created_by:     req.user.id,
         created_at:     new Date().toISOString(),
