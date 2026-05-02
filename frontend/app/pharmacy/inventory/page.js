@@ -2,7 +2,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { api } from '@/lib/api';
 
-const EMPTY_FORM = { medicine_name: '', category: '', unit: 'tablet', unit_price: '', reorder_level: 10, batch_number: '', expiry_date: '', manufacturer: '', barcode: '' };
+const EMPTY_FORM = { medicine_name: '', category: '', unit: 'tablet', unit_price: '', reorder_level: 10, batch_number: '', expiry_date: '', manufacturer: '', barcode: '', initial_stock: '' };
 
 export default function PharmacyInventoryPage() {
   const [inventory, setInventory]   = useState([]);
@@ -99,7 +99,7 @@ export default function PharmacyInventoryPage() {
     if (!form.medicine_name || !form.unit_price) { setMsg('Name and price required'); return; }
     setLoading(true);
     try {
-      await api('/pharmacy/inventory', { method: 'POST', body: JSON.stringify({ ...form, current_stock: 0, unit_price: parseFloat(form.unit_price), reorder_level: parseInt(form.reorder_level) }) });
+      await api('/pharmacy/inventory', { method: 'POST', body: JSON.stringify({ ...form, current_stock: parseInt(form.initial_stock) || 0, unit_price: parseFloat(form.unit_price), reorder_level: parseInt(form.reorder_level) }) });
       setMsg('Medicine added'); setShowAdd(false); setForm(EMPTY_FORM);
       await load();
     } catch (e) { setMsg(e.message); } finally { setLoading(false); }
@@ -190,28 +190,50 @@ export default function PharmacyInventoryPage() {
   };
 
   const fetchExternalDetails = async (barcode) => {
-    // 1. Open Food Facts
+    const parseOFF = (p) => {
+      const name = p.product_name_en || p.product_name || p.generic_name || '';
+      if (!name) return null;
+      const qty = p.quantity || '';
+      const cat = (p.categories_tags?.[0] || '').replace(/^(en|fr|de):/, '');
+      return { medicine_name: (name + (qty ? ` ${qty}` : '')).trim(), manufacturer: p.brands || '', category: cat, unit: guessUnit(name + ' ' + cat) };
+    };
+
+    // 1. Open Products Facts (medicines, health products — better than food DB)
+    try {
+      const res  = await fetch(`https://world.openproductsfacts.org/api/v0/product/${barcode}.json`);
+      const data = await res.json();
+      if (data.status === 1 && data.product) { const r = parseOFF(data.product); if (r) return r; }
+    } catch (_) {}
+
+    // 2. Open Food Facts
     try {
       const res  = await fetch(`https://world.openfoodfacts.org/api/v0/product/${barcode}.json`);
       const data = await res.json();
-      if (data.status === 1 && data.product) {
-        const p    = data.product;
-        const name = p.product_name_en || p.product_name || p.generic_name || '';
-        const qty  = p.quantity || '';
-        const cat  = (p.categories_tags?.[0] || '').replace(/^(en|fr|de):/, '');
-        const unit = guessUnit(name + ' ' + cat);
-        if (name) return { medicine_name: (name + (qty ? ` ${qty}` : '')).trim(), manufacturer: p.brands || '', category: cat, unit };
-      }
+      if (data.status === 1 && data.product) { const r = parseOFF(data.product); if (r) return r; }
     } catch (_) {}
 
-    // 2. UPC Item DB (free, global coverage)
+    // 3. Open Beauty Facts (OTC topicals, cosmetics with medicinal claims)
+    try {
+      const res  = await fetch(`https://world.openbeautyfacts.org/api/v0/product/${barcode}.json`);
+      const data = await res.json();
+      if (data.status === 1 && data.product) { const r = parseOFF(data.product); if (r) return r; }
+    } catch (_) {}
+
+    // 4. Datakick (free product DB)
+    try {
+      const res  = await fetch(`https://www.datakick.org/api/items/${barcode}`);
+      const data = await res.json();
+      if (data.name) return { medicine_name: data.name, manufacturer: data.brand_name || '', category: '', unit: guessUnit(data.name) };
+    } catch (_) {}
+
+    // 5. UPC Item DB
     try {
       const res  = await fetch(`https://api.upcitemdb.com/prod/trial/lookup?upc=${barcode}`);
       const data = await res.json();
       if (data.items?.length > 0) {
         const item = data.items[0];
         const name = item.title || item.description || '';
-        return { medicine_name: name, manufacturer: item.brand || '', category: item.category || '', unit: guessUnit(name) };
+        if (name) return { medicine_name: name, manufacturer: item.brand || '', category: item.category || '', unit: guessUnit(name) };
       }
     } catch (_) {}
 
@@ -422,7 +444,7 @@ export default function PharmacyInventoryPage() {
       {showAdd && (
         <div style={{ ...s.card, marginBottom: 16, borderLeft: '4px solid #00b4a0' }}>
           <h2 style={s.h2}>Add New Medicine</h2>
-          <MedicineForm form={form} setForm={setForm} s={s} />
+          <MedicineForm form={form} setForm={setForm} s={s} autoFocusName={!!form.barcode} />
           <div style={{ display: 'flex', gap: 10, marginTop: 8 }}>
             <button onClick={addMedicine} disabled={loading} style={s.btnPri}>{loading ? 'Adding...' : 'Add Medicine'}</button>
             <button onClick={() => setShowAdd(false)} style={s.btnSec}>Cancel</button>
@@ -551,17 +573,18 @@ function BarcodeScanner({ onDetect, onError }) {
 }
 
 // ── Medicine Form ─────────────────────────────────────────────────────────────
-function MedicineForm({ form, setForm, s }) {
+function MedicineForm({ form, setForm, s, autoFocusName = false }) {
   return (
     <div style={s.grid3}>
-      <div style={s.fg}><label style={s.label}>Medicine Name *</label><input value={form.medicine_name} onChange={e => setForm(f => ({ ...f, medicine_name: e.target.value }))} style={s.input} /></div>
-      <div style={s.fg}><label style={s.label}>Category</label><input value={form.category} onChange={e => setForm(f => ({ ...f, category: e.target.value }))} style={s.input} /></div>
+      <div style={s.fg}><label style={s.label}>Medicine Name *</label><input autoFocus={autoFocusName} value={form.medicine_name} onChange={e => setForm(f => ({ ...f, medicine_name: e.target.value }))} style={s.input} placeholder="e.g. Paracetamol 500mg" /></div>
+      <div style={s.fg}><label style={s.label}>Category</label><input value={form.category} onChange={e => setForm(f => ({ ...f, category: e.target.value }))} style={s.input} placeholder="e.g. Analgesic" /></div>
       <div style={s.fg}><label style={s.label}>Unit</label>
         <select value={form.unit} onChange={e => setForm(f => ({ ...f, unit: e.target.value }))} style={s.input}>
           {['tablet', 'capsule', 'syrup', 'injection', 'cream', 'drops', 'sachet', 'strip'].map(u => <option key={u} value={u}>{u}</option>)}
         </select>
       </div>
-      <div style={s.fg}><label style={s.label}>Unit Price (₹) *</label><input type="number" value={form.unit_price} onChange={e => setForm(f => ({ ...f, unit_price: e.target.value }))} style={s.input} /></div>
+      <div style={s.fg}><label style={s.label}>Unit Price (₹) *</label><input type="number" value={form.unit_price} onChange={e => setForm(f => ({ ...f, unit_price: e.target.value }))} style={s.input} placeholder="0.00" /></div>
+      <div style={s.fg}><label style={s.label}>Initial Stock (qty)</label><input type="number" value={form.initial_stock} onChange={e => setForm(f => ({ ...f, initial_stock: e.target.value }))} style={s.input} placeholder="0" /></div>
       <div style={s.fg}><label style={s.label}>Reorder Level</label><input type="number" value={form.reorder_level} onChange={e => setForm(f => ({ ...f, reorder_level: e.target.value }))} style={s.input} /></div>
       <div style={s.fg}><label style={s.label}>Barcode / QR</label><input value={form.barcode} onChange={e => setForm(f => ({ ...f, barcode: e.target.value }))} style={s.input} placeholder="Optional — scan or type" /></div>
       <div style={s.fg}><label style={s.label}>Batch Number</label><input value={form.batch_number} onChange={e => setForm(f => ({ ...f, batch_number: e.target.value }))} style={s.input} /></div>
