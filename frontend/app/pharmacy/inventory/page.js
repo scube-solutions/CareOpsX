@@ -145,6 +145,50 @@ export default function PharmacyInventoryPage() {
     setShowScan(false); setScanBarcode(''); setScanMsg(''); setScanLoading(false); setCameraActive(false);
   };
 
+  const guessUnit = (text) => {
+    const t = (text || '').toLowerCase();
+    if (t.includes('syrup') || t.includes('liquid') || t.includes('solution') || t.includes('suspension')) return 'syrup';
+    if (t.includes('injection') || t.includes('injectable') || t.includes('infusion')) return 'injection';
+    if (t.includes('capsule') || t.includes('cap ') || t.includes('caps')) return 'capsule';
+    if (t.includes('cream') || t.includes('ointment') || t.includes('gel') || t.includes('lotion')) return 'cream';
+    if (t.includes('drop')) return 'drops';
+    if (t.includes('sachet') || t.includes('powder')) return 'sachet';
+    if (t.includes('strip') || t.includes('patch')) return 'strip';
+    return 'tablet';
+  };
+
+  // QR codes on medicine boxes often contain text, not numeric barcodes — parse directly
+  const parseTextQR = (raw) => {
+    const text = raw.trim();
+    if (/^\d{6,14}$/.test(text)) return null;                          // pure numeric = EAN/UPC, skip
+    if (/^[A-Z0-9\-]{4,20}$/.test(text) && !text.includes(' ')) return null; // short code ID, skip
+
+    let name = '';
+    let manufacturer = '';
+
+    // "FROM THE MAKERS OF :- PRODUCT_NAME & OTHER"
+    const fromMakers = text.match(/from\s+the\s+makers\s+of\s*[:\-]*\s*(.+)/i);
+    if (fromMakers) {
+      name = fromMakers[1].split(/\s*&\s*|\s+AND\s+/i)[0].trim();
+    }
+
+    // "Manufactured by: XYZ" / "Product: NAME"
+    if (!name) {
+      const lines = text.split(/[\n\r|]+/).map(l => l.trim()).filter(Boolean);
+      for (const line of lines) {
+        const mfr  = line.match(/^(?:mfr?d?\s+by|manufactured\s+by|company)\s*[:\-]\s*(.+)/i);
+        if (mfr && !manufacturer) { manufacturer = mfr[1].trim(); continue; }
+        const prod = line.match(/^(?:product|medicine|drug)\s*[:\-]\s*(.+)/i);
+        if (prod && !name) { name = prod[1].trim(); continue; }
+      }
+      // fallback: first line that looks like a product name (no colon, ≤80 chars)
+      if (!name) name = lines.find(l => l.length <= 80 && !l.includes(':')) || lines[0] || '';
+    }
+
+    if (!name) return null;
+    return { medicine_name: name, manufacturer, unit: guessUnit(name + ' ' + text) };
+  };
+
   const fetchExternalDetails = async (barcode) => {
     // 1. Open Food Facts
     try {
@@ -156,45 +200,22 @@ export default function PharmacyInventoryPage() {
         const qty  = p.quantity || '';
         const cat  = (p.categories_tags?.[0] || '').replace(/^(en|fr|de):/, '');
         const unit = guessUnit(name + ' ' + cat);
-        if (name) return {
-          medicine_name: (name + (qty ? ` ${qty}` : '')).trim(),
-          manufacturer:  p.brands || p.manufacturer || '',
-          category:      cat,
-          unit,
-        };
+        if (name) return { medicine_name: (name + (qty ? ` ${qty}` : '')).trim(), manufacturer: p.brands || '', category: cat, unit };
       }
     } catch (_) {}
 
-    // 2. UPC Item DB (free, no key, global coverage)
+    // 2. UPC Item DB (free, global coverage)
     try {
       const res  = await fetch(`https://api.upcitemdb.com/prod/trial/lookup?upc=${barcode}`);
       const data = await res.json();
       if (data.items?.length > 0) {
         const item = data.items[0];
         const name = item.title || item.description || '';
-        const unit = guessUnit(name + ' ' + (item.category || ''));
-        return {
-          medicine_name: name,
-          manufacturer:  item.brand || '',
-          category:      item.category || '',
-          unit,
-        };
+        return { medicine_name: name, manufacturer: item.brand || '', category: item.category || '', unit: guessUnit(name) };
       }
     } catch (_) {}
 
     return null;
-  };
-
-  const guessUnit = (text) => {
-    const t = (text || '').toLowerCase();
-    if (t.includes('syrup') || t.includes('liquid') || t.includes('solution') || t.includes('suspension')) return 'syrup';
-    if (t.includes('injection') || t.includes('injectable') || t.includes('infusion')) return 'injection';
-    if (t.includes('capsule') || t.includes('cap ') || t.includes('caps')) return 'capsule';
-    if (t.includes('cream') || t.includes('ointment') || t.includes('gel') || t.includes('lotion')) return 'cream';
-    if (t.includes('drop')) return 'drops';
-    if (t.includes('sachet') || t.includes('powder')) return 'sachet';
-    if (t.includes('strip') || t.includes('patch')) return 'strip';
-    return 'tablet';
   };
 
   const handleBarcodeDetected = async (barcode) => {
@@ -210,8 +231,10 @@ export default function PharmacyInventoryPage() {
         setShowStock(data.medicine.id);
         setMsg(`Found: ${data.medicine.medicine_name} — enter quantity to add stock`);
       } else {
-        setScanMsg('Not in inventory. Fetching details from drug database…');
-        const ext = await fetchExternalDetails(code);
+        setScanMsg('Not in inventory. Extracting details…');
+        // Text QR codes (medicine box QR with product info) — parse directly, skip external APIs
+        const textResult = parseTextQR(code);
+        const ext = textResult || await fetchExternalDetails(code);
         closeScan();
         setForm({
           ...EMPTY_FORM,
