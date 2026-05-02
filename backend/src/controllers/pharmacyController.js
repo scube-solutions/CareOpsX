@@ -37,9 +37,24 @@ const getMedicineById = async (req, res) => {
   }
 };
 
+const getMedicineByBarcode = async (req, res) => {
+  try {
+    const { data, error } = await supabase.from('pharmacy_inventory')
+      .select('*')
+      .eq('barcode', req.params.barcode)
+      .eq('is_active', true)
+      .maybeSingle();
+    if (error) throw error;
+    if (!data) return res.json({ found: false, medicine: null });
+    return res.json({ found: true, medicine: data });
+  } catch (err) {
+    return res.status(500).json({ error: err.message });
+  }
+};
+
 const addMedicine = async (req, res) => {
   try {
-    const { medicine_name, category, unit, current_stock, reorder_level, unit_price, batch_number, expiry_date, manufacturer } = req.body;
+    const { medicine_name, category, unit, current_stock, reorder_level, unit_price, batch_number, expiry_date, manufacturer, barcode } = req.body;
     if (!medicine_name) return res.status(400).json({ error: 'medicine_name is required' });
 
     const { data, error } = await supabase.from('pharmacy_inventory').insert([{
@@ -47,6 +62,7 @@ const addMedicine = async (req, res) => {
       current_stock: current_stock || 0, reorder_level: reorder_level || 10,
       unit_price: unit_price || 0, batch_number: batch_number || null,
       expiry_date: expiry_date || null, manufacturer: manufacturer || null,
+      barcode: barcode || null,
       is_active: true, created_by: req.user.id, created_at: new Date().toISOString()
     }]).select('*').single();
 
@@ -329,6 +345,7 @@ const bulkImportMedicines = async (req, res) => {
         batch_number:   (m.batch_number || '').trim() || null,
         expiry_date:    (m.expiry_date || '').trim()  || null,
         manufacturer:   (m.manufacturer || '').trim() || null,
+        barcode:        (m.barcode || '').trim() || null,
         is_active:      true,
         created_by:     req.user.id,
         created_at:     new Date().toISOString(),
@@ -347,4 +364,4 @@ const bulkImportMedicines = async (req, res) => {
   }
 };
 
-module.exports = { getInventory, getMedicineById, addMedicine, updateMedicine, addStock, getPharmacyInvoices, createPharmacyInvoice, dispensePharmacyInvoice, getStockAlerts, getPendingPrescriptions, bulkImportMedicines, getMyInvoices };
+module.exports = { getInventory, getMedicineById, getMedicineByBarcode, addMedicine, updateMedicine, addStock, getPharmacyInvoices, createPharmacyInvoice, dispensePharmacyInvoice, getStockAlerts, getPendingPrescriptions, bulkImportMedicines, getMyInvoices };
