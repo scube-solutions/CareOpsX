@@ -1,0 +1,28 @@
+<?xml version="1.0"?>
+<svg width="1600" height="520" xmlns="http://www.w3.org/2000/svg" xmlns:svg="http://www.w3.org/2000/svg">
+ <defs>
+  <linearGradient id="iconGrad" x1="0.25" x2="1.25" y1="-0.06" y2="0.94">
+   <stop offset="0%" stop-color="#14B8C4"/>
+   <stop offset="100%" stop-color="#1E2E86"/>
+  </linearGradient>
+  <filter filterUnits="userSpaceOnUse" height="420" id="shadow" width="420" x="0" y="0"/>
+ </defs>
+ <!-- Icon -->
+ <!-- Plus sign -->
+ <!-- Wordmark -->
+ <!-- Tagline -->
+ <g class="layer">
+  <title>Layer 1</title>
+  <rect fill="white" height="520" id="svg_1" transform="matrix(1 0 0 1 0 0)" width="1600" x="1" y="1"/>
+  <g filter="url(#shadow)" id="svg_2">
+   <rect fill="url(#iconGrad)" height="160" id="svg_3" rx="34" width="160" x="80" y="90"/>
+  </g>
+  <rect fill="white" height="80" id="svg_4" rx="8" width="26" x="147" y="130"/>
+  <rect fill="white" height="26" id="svg_5" rx="8" width="80" x="120" y="157"/>
+  <g font-family="Arial, Helvetica, sans-serif" font-weight="700" id="svg_6" transform="matrix(1 0 0 1 0 0)">
+   <text fill="#0B132B" font-size="84" id="svg_7" transform="matrix(1.02176 0 0 1 -6.5266 0)" x="357.74" y="177">Care</text>
+   <text fill="#18A7A8" font-size="84" id="svg_8" transform="matrix(1.02176 0 0 1 -6.5266 0)" x="546.85" y="179">OpsX</text>
+  </g>
+  <text fill="#5B6578" font-family="Arial, Helvetica, sans-serif" font-size="38" font-weight="500" id="svg_9" letter-spacing="7" transform="matrix(1 0 0 1 0 0) matrix(0.629165 0 0 0.748951 173.938 27.4671)" x="303.25" y="255.33">HEALTHCARE OPERATIONS</text>
+ </g>
+</svg>
