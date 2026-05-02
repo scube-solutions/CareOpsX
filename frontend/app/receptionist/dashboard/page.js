@@ -74,10 +74,9 @@ export default function ReceptionistDashboard() {
   const completedAppts  = appts.filter(a => a.status === 'completed');
 
   const cards = [
-    { key: 'appts',     label: "Today's Appointments", value: todayAppts.length,                                             color: '#00b4a0' },
-    { key: 'completed', label: 'Completed',             value: stats?.completed_consultations ?? completedAppts.length,      color: '#3b82f6' },
-    { key: 'pending',   label: 'Pending Collections',   value: stats ? `₹${stats.pending_collections?.toFixed(0)}` : '–',   color: '#f59e0b' },
-    { key: 'followups', label: 'Upcoming Follow-ups',   value: queue.length,                                                 color: '#8b5cf6' },
+    { key: 'appts',     label: "Today's Appointments", value: todayAppts.length,                                        color: '#00b4a0' },
+    { key: 'completed', label: 'Completed',             value: stats?.completed_consultations ?? completedAppts.length, color: '#3b82f6' },
+    { key: 'followups', label: 'Upcoming Follow-ups',   value: queue.length,                                            color: '#8b5cf6' },
   ];
 
   const ApptTable = ({ rows, emptyMsg }) => rows.length === 0
@@ -100,7 +99,7 @@ export default function ReceptionistDashboard() {
                     : <span style={{ color: '#cbd5e1', fontSize: 12 }}>–</span>
                   }
                 </td>
-                <td style={s.td}><span style={{ fontWeight: 600, color: '#0f1f3d' }}>{patName}</span></td>
+                <td style={s.td}><a href={`/receptionist/patients/${a.patient_id}`} style={{ fontWeight: 600, color: '#0f1f3d', textDecoration: 'none' }}>{patName}</a></td>
                 <td style={s.td}>{a.patients?.phone || '–'}</td>
                 <td style={s.td}>Dr. {docName}<div style={{ fontSize: 11, color: '#64748b' }}>{a.doctors?.specialization}</div></td>
                 <td style={s.td}><div style={{ fontWeight: 500 }}>{a.appointment_date}</div><div style={{ fontSize: 12, color: '#64748b' }}>{(a.appointment_time || '').slice(0, 5)}</div></td>
@@ -130,7 +129,7 @@ export default function ReceptionistDashboard() {
       </div>
 
       {/* KPI Cards — clickable */}
-      <div style={s.grid4}>
+      <div style={s.grid3}>
         {cards.map(c => (
           <div key={c.key} onClick={() => setModal(c.key)}
             style={{ ...s.card, borderTop: `4px solid ${c.color}`, cursor: 'pointer', transition: 'box-shadow .15s' }}
@@ -252,27 +251,7 @@ export default function ReceptionistDashboard() {
           <ApptTable rows={completedAppts} emptyMsg="No completed appointments." />
         </Modal>
       )}
-      {modal === 'pending' && (
-        <Modal title="Pending Collections" onClose={() => setModal(null)}>
-          {payRequests.length === 0
-            ? <p style={s.empty}>No pending payment requests.</p>
-            : <table style={s.table}>
-                <thead><tr>{['Patient', 'Phone', 'Doctor', 'Date', 'Fee'].map(h => <th key={h} style={s.th}>{h}</th>)}</tr></thead>
-                <tbody>
-                  {payRequests.map(r => (
-                    <tr key={r.id} style={{ borderBottom: '1px solid #f1f5f9' }}>
-                      <td style={s.td}>{r.patient_name}</td>
-                      <td style={s.td}>{r.patient_phone || '–'}</td>
-                      <td style={s.td}>{r.doctor_name || '–'}</td>
-                      <td style={s.td}>{r.appointment_date || '–'}</td>
-                      <td style={s.td}>₹{r.consultation_fee}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-          }
-        </Modal>
-      )}
+
       {modal === 'followups' && (
         <Modal title={`Upcoming Follow-ups (${queue.length})`} onClose={() => setModal(null)}>
           {queue.length === 0 ? <p style={s.empty}>No upcoming follow-ups.</p> : (
@@ -305,6 +284,7 @@ const s = {
   h3:          { fontSize: '1rem', fontWeight: 600, color: '#0f1f3d', margin: 0 },
   sub:         { fontSize: '.875rem', color: '#64748b', margin: '4px 0 0' },
   grid4:       { display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 16, marginBottom: 20 },
+  grid3:       { display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 16, marginBottom: 20 },
   card:        { background: '#fff', borderRadius: 12, padding: '1.25rem', boxShadow: '0 1px 4px rgba(0,0,0,0.06)', border: '1px solid #e2e8f0' },
   section:     { background: '#fff', borderRadius: 12, padding: '1.25rem', boxShadow: '0 1px 4px rgba(0,0,0,0.06)', border: '1px solid #e2e8f0', marginBottom: 16 },
   table:       { width: '100%', borderCollapse: 'collapse' },

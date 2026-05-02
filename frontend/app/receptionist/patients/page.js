@@ -77,6 +77,9 @@ export default function SearchPatientPage() {
                   <td style={s.td}>{p.blood_group || '–'}</td>
                   <td style={s.td}>
                     <div style={{ display: 'flex', gap: 8 }}>
+                      <a href={`/receptionist/patients/${p.id}`} style={{ ...s.btnBook, background: '#f0fdfb', color: '#0f766e', borderColor: '#99f6e4' }}>
+                        View
+                      </a>
                       <a href={`/receptionist/appointments?patient_id=${p.id}&patient_name=${encodeURIComponent(p.first_name + ' ' + p.last_name)}`} style={s.btnBook}>
                         Book Appt
                       </a>
