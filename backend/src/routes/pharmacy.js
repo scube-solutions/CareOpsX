@@ -5,6 +5,7 @@ const ctrl = require('../controllers/pharmacyController');
 // 1=Admin, 7=Pharmacist
 router.get('/inventory', verifyToken, requireRole([1, 2, 7]), ctrl.getInventory);
 router.get('/inventory/alerts', verifyToken, requireRole([1, 7]), ctrl.getStockAlerts);
+router.get('/inventory/barcode/:barcode', verifyToken, requireRole([1, 7]), ctrl.getMedicineByBarcode);
 router.get('/inventory/:id', verifyToken, requireRole([1, 7]), ctrl.getMedicineById);
 router.post('/inventory', verifyToken, requireRole([1, 7]), ctrl.addMedicine);
 router.post('/inventory/bulk', verifyToken, requireRole([1, 7]), ctrl.bulkImportMedicines);
