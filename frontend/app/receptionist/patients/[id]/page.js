@@ -38,12 +38,8 @@ export default function PatientDetailPage() {
     ? Math.floor((Date.now() - new Date(patient.date_of_birth)) / 31557600000)
     : null;
 
-  const totalPaid = invoices.reduce((sum, inv) => {
-    const paid = (inv.payments || []).reduce((s, p) => s + (p.amount || 0), 0);
-    return sum + paid;
-  }, 0);
-
-  const totalDue = invoices.reduce((sum, inv) => sum + (inv.balance_due || 0), 0);
+  const totalPaid = invoices.reduce((sum, inv) => sum + (Number(inv.paid_amount) || 0), 0);
+  const totalDue  = invoices.reduce((sum, inv) => sum + (Number(inv.balance_amount) || 0), 0);
 
   const STATUS_COLOR = {
     booked:    { bg: '#fef3c7', text: '#92400e' },
@@ -224,8 +220,8 @@ export default function PatientDetailPage() {
                         <td style={s.td}>{inv.invoice_type || 'consultation'}</td>
                         <td style={s.td}>{(inv.created_at || '').slice(0, 10)}</td>
                         <td style={s.td}>₹{(inv.total_amount || 0).toFixed(2)}</td>
-                        <td style={s.td} style={{ color: '#166534', fontWeight: 600 }}>₹{paid.toFixed(2)}</td>
-                        <td style={s.td} style={{ color: bal > 0 ? '#b91c1c' : '#166534', fontWeight: 600 }}>₹{bal.toFixed(2)}</td>
+                        <td style={{ ...s.td, color: '#166534', fontWeight: 600 }}>₹{paid.toFixed(2)}</td>
+                        <td style={{ ...s.td, color: bal > 0 ? '#b91c1c' : '#166534', fontWeight: 600 }}>₹{bal.toFixed(2)}</td>
                         <td style={s.td}><span style={{ background: statusColor.bg, color: statusColor.text, padding: '3px 10px', borderRadius: 20, fontSize: 12, fontWeight: 600 }}>{inv.status}</span></td>
                       </tr>
                     );
