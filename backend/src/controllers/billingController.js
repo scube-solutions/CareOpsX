@@ -322,7 +322,7 @@ const getMyInvoices = async (req, res) => {
 
     const { data: invoices, error } = await supabase
       .from('invoices')
-      .select('*, invoice_items(*), payments(*)')
+      .select('*')
       .eq('patient_id', patRec.id)
       .order('created_at', { ascending: false });
 
