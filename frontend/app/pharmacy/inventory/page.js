@@ -35,13 +35,14 @@ export default function PharmacyInventoryPage() {
   const [cameraActive, setCameraActive] = useState(false);
   const scanningRef = useRef(false);
 
-  const CSV_HEADERS = ['medicine_name','category','unit','unit_price','current_stock','reorder_level','batch_number','expiry_date','manufacturer'];
+  const CSV_HEADERS = ['medicine_name','category','unit','unit_price','current_stock','reorder_level','batch_number','expiry_date','manufacturer','barcode'];
 
   const downloadTemplate = () => {
     const sample = [
       CSV_HEADERS.join(','),
-      'Paracetamol 500mg,Analgesic,tablet,10,500,50,B001,2026-12-31,Sun Pharma',
-      'Amoxicillin 250mg,Antibiotic,capsule,25,200,30,B002,2026-06-30,Cipla',
+      'Paracetamol 500mg,Analgesic,tablet,10,500,50,B001,2026-12-31,Sun Pharma,8901234567890',
+      'Amoxicillin 250mg,Antibiotic,capsule,25,200,30,B002,2026-06-30,Cipla,8909876543210',
+      'Crocin Syrup,Analgesic,syrup,45,100,20,B003,2026-09-30,GSK,',
     ].join('\n');
     const blob = new Blob([sample], { type: 'text/csv' });
     const a = document.createElement('a'); a.href = URL.createObjectURL(blob);
@@ -409,7 +410,7 @@ export default function PharmacyInventoryPage() {
                 <table style={{ ...s.table, minWidth: 700 }}>
                   <thead>
                     <tr style={{ background: '#f8fafc', position: 'sticky', top: 0 }}>
-                      {['Medicine Name','Category','Unit','Price','Stock','Reorder','Batch','Expiry','Manufacturer'].map(h => (
+                      {['Medicine Name','Category','Unit','Price','Stock','Reorder','Batch','Expiry','Manufacturer','Barcode'].map(h => (
                         <th key={h} style={s.th}>{h}</th>
                       ))}
                     </tr>
@@ -426,6 +427,7 @@ export default function PharmacyInventoryPage() {
                         <td style={s.td}>{r.batch_number || '–'}</td>
                         <td style={s.td}>{r.expiry_date || '–'}</td>
                         <td style={s.td}>{r.manufacturer || '–'}</td>
+                        <td style={s.td}>{r.barcode ? <span style={{ fontFamily: 'monospace', fontSize: 11, background: '#f0fdfb', color: '#0f766e', padding: '2px 6px', borderRadius: 4 }}>{r.barcode}</span> : <span style={{ color: '#cbd5e1' }}>–</span>}</td>
                       </tr>
                     ))}
                   </tbody>
