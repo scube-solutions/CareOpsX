@@ -307,12 +307,22 @@ const getReceptionPayments = async (req, res) => {
 // ── Patient: own billing invoices ─────────────────────────────────────────────
 const getMyInvoices = async (req, res) => {
   try {
-    const { data: patRec } = await supabase.from('patients').select('id').eq('user_id', req.user.id).single();
-    if (!patRec) return res.status(404).json({ error: 'Patient profile not found' });
+    let { data: patRec } = await supabase.from('patients').select('id').eq('user_id', req.user.id).single();
+
+    // Fallback: receptionist-created patients have user_id=null — match by email and link
+    if (!patRec && req.user.email) {
+      const { data: byEmail } = await supabase.from('patients').select('id').eq('email', req.user.email).maybeSingle();
+      if (byEmail) {
+        patRec = byEmail;
+        await supabase.from('patients').update({ user_id: req.user.id }).eq('id', byEmail.id);
+      }
+    }
+
+    if (!patRec) return res.json({ invoices: [] });
 
     const { data: invoices, error } = await supabase
       .from('invoices')
-      .select('*, invoice_items(*), payments(*)')
+      .select('*')
       .eq('patient_id', patRec.id)
       .order('created_at', { ascending: false });
 
