@@ -146,19 +146,55 @@ export default function PharmacyInventoryPage() {
   };
 
   const fetchExternalDetails = async (barcode) => {
+    // 1. Open Food Facts
     try {
-      const res = await fetch(`https://world.openfoodfacts.org/api/v0/product/${barcode}.json`);
+      const res  = await fetch(`https://world.openfoodfacts.org/api/v0/product/${barcode}.json`);
       const data = await res.json();
       if (data.status === 1 && data.product) {
-        const p = data.product;
-        return {
-          medicine_name: p.product_name || p.generic_name || '',
+        const p    = data.product;
+        const name = p.product_name_en || p.product_name || p.generic_name || '';
+        const qty  = p.quantity || '';
+        const cat  = (p.categories_tags?.[0] || '').replace(/^(en|fr|de):/, '');
+        const unit = guessUnit(name + ' ' + cat);
+        if (name) return {
+          medicine_name: (name + (qty ? ` ${qty}` : '')).trim(),
           manufacturer:  p.brands || p.manufacturer || '',
-          category:      (p.categories_tags?.[0] || '').replace(/^en:/, ''),
+          category:      cat,
+          unit,
         };
       }
     } catch (_) {}
+
+    // 2. UPC Item DB (free, no key, global coverage)
+    try {
+      const res  = await fetch(`https://api.upcitemdb.com/prod/trial/lookup?upc=${barcode}`);
+      const data = await res.json();
+      if (data.items?.length > 0) {
+        const item = data.items[0];
+        const name = item.title || item.description || '';
+        const unit = guessUnit(name + ' ' + (item.category || ''));
+        return {
+          medicine_name: name,
+          manufacturer:  item.brand || '',
+          category:      item.category || '',
+          unit,
+        };
+      }
+    } catch (_) {}
+
     return null;
+  };
+
+  const guessUnit = (text) => {
+    const t = (text || '').toLowerCase();
+    if (t.includes('syrup') || t.includes('liquid') || t.includes('solution') || t.includes('suspension')) return 'syrup';
+    if (t.includes('injection') || t.includes('injectable') || t.includes('infusion')) return 'injection';
+    if (t.includes('capsule') || t.includes('cap ') || t.includes('caps')) return 'capsule';
+    if (t.includes('cream') || t.includes('ointment') || t.includes('gel') || t.includes('lotion')) return 'cream';
+    if (t.includes('drop')) return 'drops';
+    if (t.includes('sachet') || t.includes('powder')) return 'sachet';
+    if (t.includes('strip') || t.includes('patch')) return 'strip';
+    return 'tablet';
   };
 
   const handleBarcodeDetected = async (barcode) => {
@@ -183,11 +219,12 @@ export default function PharmacyInventoryPage() {
           medicine_name:  ext?.medicine_name || '',
           manufacturer:   ext?.manufacturer  || '',
           category:       ext?.category      || '',
+          unit:           ext?.unit          || 'tablet',
         });
         setShowAdd(true);
         setMsg(ext?.medicine_name
-          ? `Details fetched for barcode ${code}. Add price to complete.`
-          : `New barcode ${code}. Fill in the medicine details.`
+          ? `Details fetched for "${ext.medicine_name}". Verify and add price.`
+          : `New barcode ${code}. No match in drug databases — fill details manually.`
         );
       }
     } catch (e) {
