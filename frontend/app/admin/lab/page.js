@@ -72,7 +72,7 @@ export default function AdminLabPage() {
         ))}
       </div>
 
-      <div style={{ display: 'grid', gridTemplateColumns: selected ? '1fr 380px' : '1fr', gap: 20 }}>
+      <div className={selected ? 'responsive-detail-380' : ''} style={!selected ? { display: 'grid', gridTemplateColumns: '1fr', gap: 20 } : undefined}>
         <div style={s.card}>
           {orders.length === 0 ? <p style={s.empty}>No orders found.</p> : (
             <table style={s.table}>

@@ -1,10 +1,12 @@
-const supabase = require('../utils/supabase');
 const { auditLog } = require('../middlewares/audit');
+const { getOrganizationContext, ensurePortalEnabled, ensureSeatAvailable } = require('../utils/organizationAccess');
 
 // ── Hospital Profile ──────────────────────────────────────────────────────────
 const getHospitalProfile = async (req, res) => {
   try {
-    const { data, error } = await supabase.from('hospital_profile').select('*').single();
+    const supabase = req.db;
+    const { organizationId } = await getOrganizationContext(req);
+    const { data, error } = await supabase.from('hospital_profile').select('*').eq('organization_id', organizationId).single();
     if (error && error.code !== 'PGRST116') throw error;
     return res.json({ profile: data || {} });
   } catch (err) {
@@ -14,15 +16,17 @@ const getHospitalProfile = async (req, res) => {
 
 const upsertHospitalProfile = async (req, res) => {
   try {
+    const supabase = req.db;
+    const { organizationId } = await getOrganizationContext(req);
     const payload = { ...req.body, updated_by: req.user.id, updated_at: new Date().toISOString() };
-    const { data: existing } = await supabase.from('hospital_profile').select('id').single();
+    const { data: existing } = await supabase.from('hospital_profile').select('id').eq('organization_id', organizationId).single();
     let result;
     if (existing) {
       const { data, error } = await supabase.from('hospital_profile').update(payload).eq('id', existing.id).select('*').single();
       if (error) throw error;
       result = data;
     } else {
-      const { data, error } = await supabase.from('hospital_profile').insert([{ ...payload, created_by: req.user.id }]).select('*').single();
+      const { data, error } = await supabase.from('hospital_profile').insert([{ ...payload, organization_id: organizationId, created_by: req.user.id }]).select('*').single();
       if (error) throw error;
       result = data;
     }
@@ -36,7 +40,9 @@ const upsertHospitalProfile = async (req, res) => {
 // ── Branches ─────────────────────────────────────────────────────────────────
 const getBranches = async (req, res) => {
   try {
-    const { data, error } = await supabase.from('branches').select('*').order('created_at', { ascending: false });
+    const supabase = req.db;
+    const { organizationId } = await getOrganizationContext(req);
+    const { data, error } = await supabase.from('branches').select('*').eq('organization_id', organizationId).order('created_at', { ascending: false });
     if (error) throw error;
     return res.json({ branches: data });
   } catch (err) {
@@ -46,7 +52,9 @@ const getBranches = async (req, res) => {
 
 const createBranch = async (req, res) => {
   try {
-    const { data, error } = await supabase.from('branches').insert([{ ...req.body, created_by: req.user.id }]).select('*').single();
+    const supabase = req.db;
+    const { organizationId } = await getOrganizationContext(req);
+    const { data, error } = await supabase.from('branches').insert([{ ...req.body, organization_id: organizationId, created_by: req.user.id }]).select('*').single();
     if (error) throw error;
     await auditLog({ user_id: req.user.id, role_id: req.user.role_id, action: 'CREATE', module: 'Admin', entity_type: 'branch', entity_id: data.id });
     return res.status(201).json({ message: 'Branch created', branch: data });
@@ -57,7 +65,9 @@ const createBranch = async (req, res) => {
 
 const updateBranch = async (req, res) => {
   try {
-    const { data, error } = await supabase.from('branches').update({ ...req.body, updated_by: req.user.id, updated_at: new Date().toISOString() }).eq('id', req.params.id).select('*').single();
+    const supabase = req.db;
+    const { organizationId } = await getOrganizationContext(req);
+    const { data, error } = await supabase.from('branches').update({ ...req.body, updated_by: req.user.id, updated_at: new Date().toISOString() }).eq('id', req.params.id).eq('organization_id', organizationId).select('*').single();
     if (error) throw error;
     await auditLog({ user_id: req.user.id, role_id: req.user.role_id, action: 'UPDATE', module: 'Admin', entity_type: 'branch', entity_id: req.params.id });
     return res.json({ message: 'Branch updated', branch: data });
@@ -68,7 +78,9 @@ const updateBranch = async (req, res) => {
 
 const deleteBranch = async (req, res) => {
   try {
-    const { error } = await supabase.from('branches').update({ is_active: false, updated_by: req.user.id }).eq('id', req.params.id);
+    const supabase = req.db;
+    const { organizationId } = await getOrganizationContext(req);
+    const { error } = await supabase.from('branches').update({ is_active: false, updated_by: req.user.id }).eq('id', req.params.id).eq('organization_id', organizationId);
     if (error) throw error;
     await auditLog({ user_id: req.user.id, role_id: req.user.role_id, action: 'DEACTIVATE', module: 'Admin', entity_type: 'branch', entity_id: req.params.id });
     return res.json({ message: 'Branch deactivated' });
@@ -80,8 +92,10 @@ const deleteBranch = async (req, res) => {
 // ── Departments ───────────────────────────────────────────────────────────────
 const getDepartments = async (req, res) => {
   try {
+    const supabase = req.db;
+    const { organizationId } = await getOrganizationContext(req);
     const { active_only } = req.query;
-    let query = supabase.from('departments').select('*').order('department_name');
+    let query = supabase.from('departments').select('*').eq('organization_id', organizationId).order('department_name');
     if (active_only === 'true') query = query.eq('is_active', true);
     const { data, error } = await query;
     if (error) throw error;
@@ -93,10 +107,12 @@ const getDepartments = async (req, res) => {
 
 const createDepartment = async (req, res) => {
   try {
+    const supabase = req.db;
+    const { organizationId } = await getOrganizationContext(req);
     const { department_name, department_code } = req.body;
-    const { data: existing } = await supabase.from('departments').select('id').or(`department_name.eq.${department_name},department_code.eq.${department_code}`).maybeSingle();
+    const { data: existing } = await supabase.from('departments').select('id').eq('organization_id', organizationId).or(`department_name.eq.${department_name},department_code.eq.${department_code}`).maybeSingle();
     if (existing) return res.status(409).json({ error: 'Department name or code already exists' });
-    const { data, error } = await supabase.from('departments').insert([{ ...req.body, is_active: true, created_by: req.user.id }]).select('*').single();
+    const { data, error } = await supabase.from('departments').insert([{ ...req.body, organization_id: organizationId, is_active: true, created_by: req.user.id }]).select('*').single();
     if (error) throw error;
     await auditLog({ user_id: req.user.id, role_id: req.user.role_id, action: 'CREATE', module: 'Admin', entity_type: 'department', entity_id: data.id });
     return res.status(201).json({ message: 'Department created', department: data });
@@ -107,7 +123,9 @@ const createDepartment = async (req, res) => {
 
 const updateDepartment = async (req, res) => {
   try {
-    const { data, error } = await supabase.from('departments').update({ ...req.body, updated_by: req.user.id, updated_at: new Date().toISOString() }).eq('id', req.params.id).select('*').single();
+    const supabase = req.db;
+    const { organizationId } = await getOrganizationContext(req);
+    const { data, error } = await supabase.from('departments').update({ ...req.body, updated_by: req.user.id, updated_at: new Date().toISOString() }).eq('id', req.params.id).eq('organization_id', organizationId).select('*').single();
     if (error) throw error;
     await auditLog({ user_id: req.user.id, role_id: req.user.role_id, action: 'UPDATE', module: 'Admin', entity_type: 'department', entity_id: req.params.id });
     return res.json({ message: 'Department updated', department: data });
@@ -118,9 +136,11 @@ const updateDepartment = async (req, res) => {
 
 const toggleDepartment = async (req, res) => {
   try {
-    const { data: dept } = await supabase.from('departments').select('is_active').eq('id', req.params.id).single();
+    const supabase = req.db;
+    const { organizationId } = await getOrganizationContext(req);
+    const { data: dept } = await supabase.from('departments').select('is_active').eq('id', req.params.id).eq('organization_id', organizationId).single();
     if (!dept) return res.status(404).json({ error: 'Department not found' });
-    const { data, error } = await supabase.from('departments').update({ is_active: !dept.is_active, updated_by: req.user.id }).eq('id', req.params.id).select('*').single();
+    const { data, error } = await supabase.from('departments').update({ is_active: !dept.is_active, updated_by: req.user.id }).eq('id', req.params.id).eq('organization_id', organizationId).select('*').single();
     if (error) throw error;
     await auditLog({ user_id: req.user.id, role_id: req.user.role_id, action: data.is_active ? 'ACTIVATE' : 'DEACTIVATE', module: 'Admin', entity_type: 'department', entity_id: req.params.id });
     return res.json({ message: `Department ${data.is_active ? 'activated' : 'deactivated'}`, department: data });
@@ -132,7 +152,9 @@ const toggleDepartment = async (req, res) => {
 // ── Consultation Types / Fee Config ───────────────────────────────────────────
 const getConsultationTypes = async (req, res) => {
   try {
-    const { data, error } = await supabase.from('consultation_types').select('*').order('type_name');
+    const supabase = req.db;
+    const { organizationId } = await getOrganizationContext(req);
+    const { data, error } = await supabase.from('consultation_types').select('*').eq('organization_id', organizationId).order('type_name');
     if (error) throw error;
     return res.json({ consultation_types: data });
   } catch (err) {
@@ -142,7 +164,9 @@ const getConsultationTypes = async (req, res) => {
 
 const createConsultationType = async (req, res) => {
   try {
-    const { data, error } = await supabase.from('consultation_types').insert([{ ...req.body, created_by: req.user.id }]).select('*').single();
+    const supabase = req.db;
+    const { organizationId } = await getOrganizationContext(req);
+    const { data, error } = await supabase.from('consultation_types').insert([{ ...req.body, organization_id: organizationId, created_by: req.user.id }]).select('*').single();
     if (error) throw error;
     return res.status(201).json({ message: 'Consultation type created', consultation_type: data });
   } catch (err) {
@@ -152,7 +176,9 @@ const createConsultationType = async (req, res) => {
 
 const updateConsultationType = async (req, res) => {
   try {
-    const { data, error } = await supabase.from('consultation_types').update({ ...req.body, updated_by: req.user.id }).eq('id', req.params.id).select('*').single();
+    const supabase = req.db;
+    const { organizationId } = await getOrganizationContext(req);
+    const { data, error } = await supabase.from('consultation_types').update({ ...req.body, updated_by: req.user.id }).eq('id', req.params.id).eq('organization_id', organizationId).select('*').single();
     if (error) throw error;
     return res.json({ message: 'Consultation type updated', consultation_type: data });
   } catch (err) {
@@ -163,8 +189,10 @@ const updateConsultationType = async (req, res) => {
 // ── Doctor Leaves / Block Dates ───────────────────────────────────────────────
 const getDoctorLeaves = async (req, res) => {
   try {
+    const supabase = req.db;
+    const { organizationId } = await getOrganizationContext(req);
     const { doctor_id } = req.query;
-    let query = supabase.from('doctor_leaves').select('*').order('leave_date', { ascending: true });
+    let query = supabase.from('doctor_leaves').select('*').eq('organization_id', organizationId).order('leave_date', { ascending: true });
     if (doctor_id) query = query.eq('doctor_id', doctor_id);
     const { data, error } = await query;
     if (error) throw error;
@@ -176,7 +204,9 @@ const getDoctorLeaves = async (req, res) => {
 
 const createDoctorLeave = async (req, res) => {
   try {
-    const { data, error } = await supabase.from('doctor_leaves').insert([{ ...req.body, created_by: req.user.id }]).select('*').single();
+    const supabase = req.db;
+    const { organizationId } = await getOrganizationContext(req);
+    const { data, error } = await supabase.from('doctor_leaves').insert([{ ...req.body, organization_id: organizationId, created_by: req.user.id }]).select('*').single();
     if (error) throw error;
     await auditLog({ user_id: req.user.id, role_id: req.user.role_id, action: 'CREATE', module: 'Admin', entity_type: 'doctor_leave', entity_id: data.id });
     return res.status(201).json({ message: 'Leave created', leave: data });
@@ -187,7 +217,9 @@ const createDoctorLeave = async (req, res) => {
 
 const deleteDoctorLeave = async (req, res) => {
   try {
-    const { error } = await supabase.from('doctor_leaves').delete().eq('id', req.params.id);
+    const supabase = req.db;
+    const { organizationId } = await getOrganizationContext(req);
+    const { error } = await supabase.from('doctor_leaves').delete().eq('id', req.params.id).eq('organization_id', organizationId);
     if (error) throw error;
     return res.json({ message: 'Leave deleted' });
   } catch (err) {
@@ -198,7 +230,9 @@ const deleteDoctorLeave = async (req, res) => {
 // ── Users Management ──────────────────────────────────────────────────────────
 const getUsers = async (req, res) => {
   try {
-    const { data, error } = await supabase.from('users').select('id, first_name, last_name, email, phone, role_id, roles, is_active, branch_id, created_at').order('created_at', { ascending: false });
+    const supabase = req.db;
+    const { organizationId } = await getOrganizationContext(req);
+    const { data, error } = await supabase.from('users').select('id, first_name, last_name, email, phone, role_id, roles, is_active, branch_id, organization_id, created_at').eq('organization_id', organizationId).order('created_at', { ascending: false });
     if (error) throw error;
     const usersWithRoles = (data || []).map(u => ({
       ...u,
@@ -212,7 +246,9 @@ const getUsers = async (req, res) => {
 
 const createUser = async (req, res) => {
   try {
+    const supabase = req.db;
     const bcrypt = require('bcryptjs');
+    const { organizationId, portalAccess, seatLimits } = await getOrganizationContext(req);
     const { first_name, last_name, email, phone, password, role_id, roles, branch_id } = req.body;
     if (!email || !password || !first_name || !last_name) return res.status(400).json({ error: 'Required fields missing' });
     const { data: existing } = await supabase.from('users').select('id').eq('email', email).maybeSingle();
@@ -220,7 +256,11 @@ const createUser = async (req, res) => {
     const password_hash = await bcrypt.hash(password, 10);
     const primaryRole = role_id || (Array.isArray(roles) && roles[0]) || 5;
     const userRoles = Array.isArray(roles) && roles.length ? roles : [primaryRole];
-    const { data, error } = await supabase.from('users').insert([{ first_name, last_name, email, phone: phone || null, password_hash, role_id: primaryRole, roles: userRoles, branch_id: branch_id || null, is_active: true, created_by: req.user.id }]).select('id, first_name, last_name, email, phone, role_id, roles, is_active, branch_id, created_at').single();
+    const portalCheck = ensurePortalEnabled(portalAccess, primaryRole);
+    if (!portalCheck.ok) return res.status(403).json({ error: portalCheck.message });
+    const seatCheck = await ensureSeatAvailable({ organizationId, seatLimits, roleId: primaryRole });
+    if (!seatCheck.ok) return res.status(409).json({ error: seatCheck.message });
+    const { data, error } = await supabase.from('users').insert([{ first_name, last_name, email, phone: phone || null, password_hash, role_id: primaryRole, roles: userRoles, branch_id: branch_id || null, organization_id: organizationId, is_active: true, created_by: req.user.id }]).select('id, first_name, last_name, email, phone, role_id, roles, is_active, branch_id, organization_id, created_at').single();
     if (error) throw error;
     await auditLog({ user_id: req.user.id, role_id: req.user.role_id, action: 'CREATE_USER', module: 'Admin', entity_type: 'user', entity_id: data.id });
     return res.status(201).json({ message: 'User created', user: data });
@@ -231,17 +271,23 @@ const createUser = async (req, res) => {
 
 const updateUser = async (req, res) => {
   try {
+    const supabase = req.db;
+    const { organizationId, portalAccess, seatLimits } = await getOrganizationContext(req);
     const { password, roles, ...rest } = req.body;
     let payload = { ...rest, updated_by: req.user.id, updated_at: new Date().toISOString() };
     if (Array.isArray(roles) && roles.length > 0) {
       payload.role_id = roles[0];
       payload.roles = roles;
+      const portalCheck = ensurePortalEnabled(portalAccess, payload.role_id);
+      if (!portalCheck.ok) return res.status(403).json({ error: portalCheck.message });
+      const seatCheck = await ensureSeatAvailable({ organizationId, seatLimits, roleId: payload.role_id, excludeUserId: req.params.id });
+      if (!seatCheck.ok) return res.status(409).json({ error: seatCheck.message });
     }
     if (password) {
       const bcrypt = require('bcryptjs');
       payload.password_hash = await bcrypt.hash(password, 10);
     }
-    const { data, error } = await supabase.from('users').update(payload).eq('id', req.params.id).select('id, first_name, last_name, email, phone, role_id, roles, is_active, branch_id').single();
+    const { data, error } = await supabase.from('users').update(payload).eq('id', req.params.id).eq('organization_id', organizationId).select('id, first_name, last_name, email, phone, role_id, roles, is_active, branch_id').single();
     if (error) throw error;
     await auditLog({ user_id: req.user.id, role_id: req.user.role_id, action: 'UPDATE_USER', module: 'Admin', entity_type: 'user', entity_id: req.params.id });
     return res.json({ message: 'User updated', user: data });
@@ -252,9 +298,11 @@ const updateUser = async (req, res) => {
 
 const toggleUserActive = async (req, res) => {
   try {
-    const { data: user } = await supabase.from('users').select('is_active').eq('id', req.params.id).single();
+    const supabase = req.db;
+    const { organizationId } = await getOrganizationContext(req);
+    const { data: user } = await supabase.from('users').select('is_active').eq('id', req.params.id).eq('organization_id', organizationId).single();
     if (!user) return res.status(404).json({ error: 'User not found' });
-    const { data, error } = await supabase.from('users').update({ is_active: !user.is_active, updated_by: req.user.id }).eq('id', req.params.id).select('id, is_active').single();
+    const { data, error } = await supabase.from('users').update({ is_active: !user.is_active, updated_by: req.user.id }).eq('id', req.params.id).eq('organization_id', organizationId).select('id, is_active').single();
     if (error) throw error;
     await auditLog({ user_id: req.user.id, role_id: req.user.role_id, action: data.is_active ? 'UNLOCK_USER' : 'LOCK_USER', module: 'Admin', entity_type: 'user', entity_id: req.params.id });
     return res.json({ message: `User ${data.is_active ? 'activated' : 'locked'}`, user: data });
@@ -291,9 +339,11 @@ const cascadeDeleteDoctor = async (doctorId) => {
 
 const deleteUser = async (req, res) => {
   try {
+    const supabase = req.db;
+    const { organizationId } = await getOrganizationContext(req);
     const { id } = req.params;
     if (id === req.user.id) return res.status(400).json({ error: 'Cannot delete your own account' });
-    const { data: user } = await supabase.from('users').select('id, first_name, last_name, role_id').eq('id', id).single();
+    const { data: user } = await supabase.from('users').select('id, first_name, last_name, role_id').eq('id', id).eq('organization_id', organizationId).single();
     if (!user) return res.status(404).json({ error: 'User not found' });
     if (user.role_id === 1) return res.status(403).json({ error: 'Cannot delete admin accounts' });
     if (user.role_id === 2) {
@@ -318,7 +368,7 @@ const deleteUser = async (req, res) => {
         await cascadeDeleteDoctor(doctor.id);
       }
     }
-    const { error } = await supabase.from('users').delete().eq('id', id);
+    const { error } = await supabase.from('users').delete().eq('id', id).eq('organization_id', organizationId);
     if (error) throw error;
     await auditLog({ user_id: req.user.id, role_id: req.user.role_id, action: 'DELETE_USER', module: 'Admin', entity_type: 'user', entity_id: id });
     return res.json({ message: `User ${user.first_name} ${user.last_name} deleted` });
@@ -329,11 +379,13 @@ const deleteUser = async (req, res) => {
 
 const resetUserPassword = async (req, res) => {
   try {
+    const supabase = req.db;
     const bcrypt = require('bcryptjs');
+    const { organizationId } = await getOrganizationContext(req);
     const { new_password } = req.body;
     if (!new_password || new_password.length < 6) return res.status(400).json({ error: 'Password must be at least 6 characters' });
     const password_hash = await bcrypt.hash(new_password, 10);
-    const { error } = await supabase.from('users').update({ password_hash, force_password_change: true, updated_by: req.user.id }).eq('id', req.params.id);
+    const { error } = await supabase.from('users').update({ password_hash, force_password_change: true, updated_by: req.user.id }).eq('id', req.params.id).eq('organization_id', organizationId);
     if (error) throw error;
     await auditLog({ user_id: req.user.id, role_id: req.user.role_id, action: 'RESET_PASSWORD', module: 'Admin', entity_type: 'user', entity_id: req.params.id });
     return res.json({ message: 'Password reset successfully' });
@@ -345,8 +397,10 @@ const resetUserPassword = async (req, res) => {
 // ── Lab Test Catalog ──────────────────────────────────────────────────────────
 const getLabTestCatalog = async (req, res) => {
   try {
+    const supabase = req.db;
+    const { organizationId } = await getOrganizationContext(req);
     const { data, error } = await supabase.from('lab_test_catalog')
-      .select('*').order('test_name', { ascending: true });
+      .select('*').eq('organization_id', organizationId).order('test_name', { ascending: true });
     if (error) throw error;
     return res.json({ tests: data || [] });
   } catch (err) { return res.status(500).json({ error: err.message }); }
@@ -354,9 +408,12 @@ const getLabTestCatalog = async (req, res) => {
 
 const createLabTest = async (req, res) => {
   try {
+    const supabase = req.db;
+    const { organizationId } = await getOrganizationContext(req);
     const { test_name, test_code, category, fee, description } = req.body;
     if (!test_name || fee == null) return res.status(400).json({ error: 'test_name and fee are required' });
     const { data, error } = await supabase.from('lab_test_catalog').insert([{
+      organization_id: organizationId,
       test_name, test_code: test_code || null, category: category || null,
       fee: parseFloat(fee), description: description || null,
       is_active: true, created_by: req.user.id, created_at: new Date().toISOString(),
@@ -368,9 +425,11 @@ const createLabTest = async (req, res) => {
 
 const updateLabTest = async (req, res) => {
   try {
+    const supabase = req.db;
+    const { organizationId } = await getOrganizationContext(req);
     const { data, error } = await supabase.from('lab_test_catalog')
       .update({ ...req.body, updated_by: req.user.id, updated_at: new Date().toISOString() })
-      .eq('id', req.params.id).select('*').single();
+      .eq('id', req.params.id).eq('organization_id', organizationId).select('*').single();
     if (error) throw error;
     return res.json({ test: data });
   } catch (err) { return res.status(500).json({ error: err.message }); }
@@ -378,7 +437,9 @@ const updateLabTest = async (req, res) => {
 
 const deleteLabTest = async (req, res) => {
   try {
-    const { error } = await supabase.from('lab_test_catalog').delete().eq('id', req.params.id);
+    const supabase = req.db;
+    const { organizationId } = await getOrganizationContext(req);
+    const { error } = await supabase.from('lab_test_catalog').delete().eq('id', req.params.id).eq('organization_id', organizationId);
     if (error) throw error;
     return res.json({ message: 'Test deleted' });
   } catch (err) { return res.status(500).json({ error: err.message }); }
@@ -387,7 +448,9 @@ const deleteLabTest = async (req, res) => {
 // ── Specializations ───────────────────────────────────────────────────────────
 const getSpecializations = async (req, res) => {
   try {
-    const { data, error } = await supabase.from('specializations').select('*').order('name');
+    const supabase = req.db;
+    const { organizationId } = await getOrganizationContext(req);
+    const { data, error } = await supabase.from('specializations').select('*').eq('organization_id', organizationId).order('name');
     if (error) throw error;
     return res.json({ specializations: data || [] });
   } catch (err) { return res.status(500).json({ error: err.message }); }
@@ -395,9 +458,11 @@ const getSpecializations = async (req, res) => {
 
 const createSpecialization = async (req, res) => {
   try {
+    const supabase = req.db;
+    const { organizationId } = await getOrganizationContext(req);
     const { name } = req.body;
     if (!name?.trim()) return res.status(400).json({ error: 'name is required' });
-    const { data, error } = await supabase.from('specializations').insert([{ name: name.trim() }]).select().single();
+    const { data, error } = await supabase.from('specializations').insert([{ organization_id: organizationId, name: name.trim() }]).select().single();
     if (error) throw error;
     return res.status(201).json({ specialization: data });
   } catch (err) { return res.status(500).json({ error: err.message }); }
@@ -405,8 +470,10 @@ const createSpecialization = async (req, res) => {
 
 const toggleSpecialization = async (req, res) => {
   try {
-    const { data: cur } = await supabase.from('specializations').select('is_active').eq('id', req.params.id).single();
-    const { data, error } = await supabase.from('specializations').update({ is_active: !cur?.is_active }).eq('id', req.params.id).select().single();
+    const supabase = req.db;
+    const { organizationId } = await getOrganizationContext(req);
+    const { data: cur } = await supabase.from('specializations').select('is_active').eq('id', req.params.id).eq('organization_id', organizationId).single();
+    const { data, error } = await supabase.from('specializations').update({ is_active: !cur?.is_active }).eq('id', req.params.id).eq('organization_id', organizationId).select().single();
     if (error) throw error;
     return res.json({ specialization: data });
   } catch (err) { return res.status(500).json({ error: err.message }); }
@@ -414,7 +481,9 @@ const toggleSpecialization = async (req, res) => {
 
 const deleteSpecialization = async (req, res) => {
   try {
-    const { error } = await supabase.from('specializations').delete().eq('id', req.params.id);
+    const supabase = req.db;
+    const { organizationId } = await getOrganizationContext(req);
+    const { error } = await supabase.from('specializations').delete().eq('id', req.params.id).eq('organization_id', organizationId);
     if (error) throw error;
     return res.json({ message: 'Deleted' });
   } catch (err) { return res.status(500).json({ error: err.message }); }

@@ -3,6 +3,7 @@ const jwt      = require('jsonwebtoken');
 const crypto   = require('crypto');
 const supabase = require('../utils/supabase');
 const { sendPasswordResetEmail } = require('../utils/notify');
+const { SUPER_ADMIN_ROLE, getOrganizationById, ensureOrganizationOperational, ensurePortalEnabled } = require('../utils/organizationAccess');
 
 const FRONTEND_URL = process.env.FRONTEND_URL || 'http://localhost:3000';
 
@@ -11,7 +12,7 @@ const FRONTEND_URL = process.env.FRONTEND_URL || 'http://localhost:3000';
 ───────────────────────────────────────── */
 const register = async (req, res) => {
   try {
-    const { first_name, last_name, email, phone, password, role_id } = req.body;
+    const { first_name, last_name, email, phone, password, role_id, organization_id } = req.body;
 
     // Basic validation
     if (!first_name || !last_name || !email || !password) {
@@ -47,15 +48,16 @@ const register = async (req, res) => {
         password_hash,
         role_id      : primaryRole,
         roles        : [primaryRole],
+        organization_id: primaryRole === SUPER_ADMIN_ROLE ? null : (organization_id || null),
       }])
-      .select('id, first_name, last_name, email, role_id, created_at')
+      .select('id, first_name, last_name, email, role_id, organization_id, created_at')
       .single();
 
     if (error) throw error;
 
     // Generate JWT
     const token = jwt.sign(
-      { id: user.id, email: user.email, role_id: user.role_id, roles: [user.role_id] },
+      { id: user.id, email: user.email, role_id: user.role_id, roles: [user.role_id], organization_id: user.organization_id || null },
       process.env.JWT_SECRET,
       { expiresIn: '7d' }
     );
@@ -86,7 +88,7 @@ const login = async (req, res) => {
     // Find user by email
     const { data: user, error } = await supabase
       .from('users')
-      .select('id, first_name, last_name, email, password_hash, role_id, roles')
+      .select('id, first_name, last_name, email, password_hash, role_id, roles, organization_id')
       .eq('email', email)
       .single();
 
@@ -101,10 +103,26 @@ const login = async (req, res) => {
     }
 
     const userRoles = Array.isArray(user.roles) && user.roles.length ? user.roles : [user.role_id];
+    let organization = null;
+
+    if (user.role_id !== SUPER_ADMIN_ROLE) {
+      organization = await getOrganizationById(user.organization_id);
+      const orgCheck = ensureOrganizationOperational(organization);
+      if (!orgCheck.ok) return res.status(403).json({ error: orgCheck.message });
+      const portalCheck = ensurePortalEnabled(organization?.portal_access, user.role_id);
+      if (!portalCheck.ok) return res.status(403).json({ error: portalCheck.message });
+    }
 
     // Generate JWT
     const token = jwt.sign(
-      { id: user.id, email: user.email, role_id: user.role_id, roles: userRoles },
+      {
+        id: user.id,
+        email: user.email,
+        role_id: user.role_id,
+        roles: userRoles,
+        organization_id: user.organization_id || null,
+        organization_name: organization?.organization_name || null,
+      },
       process.env.JWT_SECRET,
       { expiresIn: '7d' }
     );
@@ -119,6 +137,8 @@ const login = async (req, res) => {
         email      : user.email,
         role_id    : user.role_id,
         roles      : userRoles,
+        organization_id: user.organization_id || null,
+        organization_name: organization?.organization_name || null,
       }
     });
 
@@ -199,4 +219,27 @@ const resetPassword = async (req, res) => {
   }
 };
 
-module.exports = { register, login, forgotPassword, resetPassword };
+// ── Change own password (authenticated) ───────────────────────────────────────
+const changePassword = async (req, res) => {
+  try {
+    const { current_password, new_password } = req.body;
+    if (!current_password || !new_password) return res.status(400).json({ error: 'current_password and new_password are required' });
+    if (new_password.length < 8) return res.status(400).json({ error: 'New password must be at least 8 characters' });
+
+    const { data: user, error } = await supabase.from('users').select('id, password_hash').eq('id', req.user.id).single();
+    if (error || !user) return res.status(404).json({ error: 'User not found' });
+
+    const valid = await bcrypt.compare(current_password, user.password_hash);
+    if (!valid) return res.status(401).json({ error: 'Current password is incorrect' });
+
+    const password_hash = await bcrypt.hash(new_password, 10);
+    await supabase.from('users').update({ password_hash, updated_at: new Date().toISOString() }).eq('id', user.id);
+
+    return res.json({ message: 'Password changed successfully' });
+  } catch (err) {
+    console.error('Change password error:', err.message);
+    return res.status(500).json({ error: 'Internal server error' });
+  }
+};
+
+module.exports = { register, login, forgotPassword, resetPassword, changePassword };

@@ -1,27 +1,27 @@
-const supabase = require('../utils/supabase');
 const { auditLog } = require('../middlewares/audit');
+const { getUserOrganizationId } = require('../utils/organizationAccess');
 
 const generateInvoiceNumber = () => {
   const now = new Date();
   return `INV-${now.getFullYear()}${String(now.getMonth()+1).padStart(2,'0')}-${Math.floor(10000+Math.random()*90000)}`;
 };
 
-const attachPatients = async (rows, idField = 'patient_id') => {
+const attachPatients = async (rows, idField = 'patient_id', db) => {
   const ids = [...new Set(rows.map(r => r[idField]).filter(Boolean))];
   if (!ids.length) return {};
-  const { data } = await supabase.from('patients').select('id, first_name, last_name, patient_uid, phone').in('id', ids);
+  const { data } = await db.from('patients').select('id, first_name, last_name, patient_uid, phone').in('id', ids);
   const map = {};
   (data || []).forEach(p => { map[p.id] = p; });
   return map;
 };
 
-const attachDoctorNames = async (rows, idField = 'doctor_id') => {
+const attachDoctorNames = async (rows, idField = 'doctor_id', db) => {
   const ids = [...new Set(rows.map(r => r[idField]).filter(Boolean))];
   if (!ids.length) return {};
-  const { data: doctors } = await supabase.from('doctors').select('id, user_id').in('id', ids);
+  const { data: doctors } = await db.from('doctors').select('id, user_id').in('id', ids);
   if (!doctors?.length) return {};
   const userIds = [...new Set(doctors.map(d => d.user_id).filter(Boolean))];
-  const { data: users } = await supabase.from('users').select('id, first_name, last_name').in('id', userIds);
+  const { data: users } = await db.from('users').select('id, first_name, last_name').in('id', userIds);
   const userMap = {};
   (users || []).forEach(u => { userMap[u.id] = u; });
   const nameMap = {};
@@ -35,13 +35,17 @@ const attachDoctorNames = async (rows, idField = 'doctor_id') => {
 // ── Get Invoices ──────────────────────────────────────────────────────────────
 const getInvoices = async (req, res) => {
   try {
+    const supabase = req.db;
     const { patient_id, status, invoice_type, date_from, date_to, page = 1, limit = 20 } = req.query;
     const offset = (parseInt(page) - 1) * parseInt(limit);
+    const organizationId = getUserOrganizationId(req);
 
     let query = supabase.from('invoices')
       .select('*', { count: 'exact' })
       .order('created_at', { ascending: false })
       .range(offset, offset + parseInt(limit) - 1);
+
+    if (organizationId) query = query.eq('organization_id', organizationId);
 
     if (patient_id) query = query.eq('patient_id', patient_id);
     if (status) query = query.eq('status', status);
@@ -52,8 +56,8 @@ const getInvoices = async (req, res) => {
     const { data, error, count } = await query;
     if (error) throw error;
 
-    const patientMap = await attachPatients(data || []);
-    const doctorMap = await attachDoctorNames(data || []);
+    const patientMap = await attachPatients(data || [], supabase);
+    const doctorMap = await attachDoctorNames(data || [], supabase);
 
     const invoices = (data || []).map(inv => ({
       ...inv,
@@ -70,13 +74,15 @@ const getInvoices = async (req, res) => {
 // ── Get Invoice By ID ─────────────────────────────────────────────────────────
 const getInvoiceById = async (req, res) => {
   try {
-    const { data, error } = await supabase.from('invoices')
-      .select('*, invoice_items(*), payments(*)')
-      .eq('id', req.params.id).single();
+    const supabase = req.db;
+    const organizationId = getUserOrganizationId(req);
+    let invQuery = supabase.from('invoices').select('*, invoice_items(*), payments(*)').eq('id', req.params.id);
+    if (organizationId) invQuery = invQuery.eq('organization_id', organizationId);
+    const { data, error } = await invQuery.single();
     if (error || !data) return res.status(404).json({ error: 'Invoice not found' });
 
-    const patientMap = await attachPatients([data]);
-    const doctorMap = await attachDoctorNames([data]);
+    const patientMap = await attachPatients([data], supabase);
+    const doctorMap = await attachDoctorNames([data], supabase);
 
     return res.json({
       invoice: {
@@ -93,6 +99,7 @@ const getInvoiceById = async (req, res) => {
 // ── Create Invoice ────────────────────────────────────────────────────────────
 const createInvoice = async (req, res) => {
   try {
+    const supabase = req.db;
     const {
       patient_id, doctor_id, appointment_id, consultation_id, invoice_type,
       items, discount, tax_percent,
@@ -116,6 +123,7 @@ const createInvoice = async (req, res) => {
     const taxAmt = (taxable * effectiveTaxPct) / 100;
     const total = taxable + taxAmt;
 
+    const organizationId = getUserOrganizationId(req);
     const invoice_number = generateInvoiceNumber();
     const { data: inv, error: invErr } = await supabase.from('invoices').insert([{
       invoice_number,
@@ -133,6 +141,7 @@ const createInvoice = async (req, res) => {
       balance_amount: total,
       status: 'pending',
       notes: notes || null,
+      organization_id: organizationId || null,
       created_by: req.user.id,
       created_at: new Date().toISOString()
     }]).select('*').single();
@@ -176,6 +185,7 @@ const createInvoice = async (req, res) => {
 // ── Record Payment ────────────────────────────────────────────────────────────
 const recordPayment = async (req, res) => {
   try {
+    const supabase = req.db;
     const { invoice_id, amount, payment_mode, payment_date, notes } = req.body;
     if (!invoice_id) return res.status(400).json({ error: 'invoice_id is required' });
 
@@ -184,12 +194,14 @@ const recordPayment = async (req, res) => {
 
     const payAmount = amount !== undefined ? parseFloat(amount) : parseFloat(inv.balance_amount || inv.total_amount);
 
+    const organizationId = getUserOrganizationId(req);
     const { data: pay, error: payErr } = await supabase.from('payments').insert([{
       invoice_id,
       amount: payAmount,
       payment_mode: payment_mode || 'cash',
       payment_date: payment_date || new Date().toISOString(),
       notes: notes || null,
+      organization_id: organizationId || null,
       created_by: req.user.id,
       created_at: new Date().toISOString()
     }]).select('*').single();
@@ -212,6 +224,7 @@ const recordPayment = async (req, res) => {
 // ── Process Refund ────────────────────────────────────────────────────────────
 const processRefund = async (req, res) => {
   try {
+    const supabase = req.db;
     const { invoice_id, refund_amount, refund_reason, payment_mode } = req.body;
     if (!invoice_id || !refund_amount || !refund_reason) return res.status(400).json({ error: 'invoice_id, refund_amount, and refund_reason required' });
 
@@ -239,8 +252,10 @@ const processRefund = async (req, res) => {
 // ── Get Payment Register ──────────────────────────────────────────────────────
 const getPaymentRegister = async (req, res) => {
   try {
+    const supabase = req.db;
     const { date_from, date_to, payment_mode } = req.query;
     const today = new Date().toISOString().split('T')[0];
+    const organizationId = getUserOrganizationId(req);
 
     let query = supabase.from('payments')
       .select('*, invoice_id')
@@ -248,6 +263,7 @@ const getPaymentRegister = async (req, res) => {
       .gte('payment_date', `${date_from || today}T00:00:00`)
       .lte('payment_date', `${date_to || today}T23:59:59`);
 
+    if (organizationId) query = query.eq('organization_id', organizationId);
     if (payment_mode) query = query.eq('payment_mode', payment_mode);
 
     const { data: payments, error } = await query;
@@ -258,7 +274,7 @@ const getPaymentRegister = async (req, res) => {
     const invoiceMap = {};
     if (invoiceIds.length) {
       const { data: invs } = await supabase.from('invoices').select('id, invoice_number, invoice_type, total_amount, patient_id').in('id', invoiceIds);
-      const patientMap = await attachPatients(invs || []);
+      const patientMap = await attachPatients(invs || [], supabase);
       (invs || []).forEach(inv => {
         invoiceMap[inv.id] = { ...inv, patients: patientMap[inv.patient_id] || null };
       });
@@ -275,11 +291,15 @@ const getPaymentRegister = async (req, res) => {
 // ── Reception Payment History (consultation + lab only) ───────────────────────
 const getReceptionPayments = async (req, res) => {
   try {
+    const supabase = req.db;
     const { patient_id, date_from, date_to, status } = req.query;
+    const organizationId = getUserOrganizationId(req);
     let query = supabase.from('invoices')
       .select('*')
       .in('invoice_type', ['consultation', 'lab'])
       .order('created_at', { ascending: false });
+
+    if (organizationId) query = query.eq('organization_id', organizationId);
 
     if (patient_id) query = query.eq('patient_id', patient_id);
     if (status)     query = query.eq('status', status);
@@ -307,6 +327,7 @@ const getReceptionPayments = async (req, res) => {
 // ── Patient: own billing invoices ─────────────────────────────────────────────
 const getMyInvoices = async (req, res) => {
   try {
+    const supabase = req.db;
     let { data: patRec } = await supabase.from('patients').select('id').eq('user_id', req.user.id).single();
 
     // Fallback: receptionist-created patients have user_id=null — match by email and link

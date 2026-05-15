@@ -1,9 +1,9 @@
-const supabase = require('../utils/supabase');
 const { auditLog } = require('../middlewares/audit');
 
 // ── Get Watchlist ─────────────────────────────────────────────────────────────
 const getWatchlist = async (req, res) => {
   try {
+    const supabase = req.db;
     const { risk_level, outcome, page = 1, limit = 20 } = req.query;
     const offset = (parseInt(page) - 1) * parseInt(limit);
 
@@ -27,6 +27,7 @@ const getWatchlist = async (req, res) => {
 // ── Get/Create Drop-off Rules ─────────────────────────────────────────────────
 const getRules = async (req, res) => {
   try {
+    const supabase = req.db;
     const { data, error } = await supabase.from('drop_off_rules').select('*').eq('is_active', true).order('risk_level');
     if (error) throw error;
     return res.json({ rules: data });
@@ -37,6 +38,7 @@ const getRules = async (req, res) => {
 
 const createRule = async (req, res) => {
   try {
+    const supabase = req.db;
     const { data, error } = await supabase.from('drop_off_rules').insert([{ ...req.body, is_active: true, created_by: req.user.id, created_at: new Date().toISOString() }]).select('*').single();
     if (error) throw error;
     return res.status(201).json({ message: 'Rule created', rule: data });
@@ -47,6 +49,7 @@ const createRule = async (req, res) => {
 
 const updateRule = async (req, res) => {
   try {
+    const supabase = req.db;
     const { data, error } = await supabase.from('drop_off_rules').update({ ...req.body, updated_by: req.user.id, updated_at: new Date().toISOString() }).eq('id', req.params.id).select('*').single();
     if (error) throw error;
     return res.json({ message: 'Rule updated', rule: data });
@@ -58,6 +61,7 @@ const updateRule = async (req, res) => {
 // ── Record Recovery Action ────────────────────────────────────────────────────
 const recordAction = async (req, res) => {
   try {
+    const supabase = req.db;
     const { id } = req.params;
     const { action_type, notes, outcome } = req.body;
 
@@ -83,6 +87,7 @@ const recordAction = async (req, res) => {
 // ── Get Outcome Summary ───────────────────────────────────────────────────────
 const getOutcomeSummary = async (req, res) => {
   try {
+    const supabase = req.db;
     const { data, error } = await supabase.from('drop_off_watchlist').select('outcome, risk_level');
     if (error) throw error;
 
@@ -104,6 +109,7 @@ const getOutcomeSummary = async (req, res) => {
 // ── Manual: Add to Watchlist ──────────────────────────────────────────────────
 const addToWatchlist = async (req, res) => {
   try {
+    const supabase = req.db;
     const { patient_id, risk_reason, risk_level, risk_score, trigger_type } = req.body;
     if (!patient_id) return res.status(400).json({ error: 'patient_id required' });
 

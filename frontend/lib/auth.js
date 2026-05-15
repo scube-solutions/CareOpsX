@@ -10,9 +10,9 @@ export const getUser = () => {
 };
 
 // Role IDs
-// 1=Admin, 2=Doctor, 3=Patient, 5=Receptionist, 6=LabStaff, 7=Pharmacist, 8=Reporting
-export const ROLES = { ADMIN: 1, DOCTOR: 2, PATIENT: 3, RECEPTIONIST: 5, LAB: 6, PHARMACIST: 7, REPORTING: 8 };
-export const ROLE_LABELS = { 1: 'Admin', 2: 'Doctor', 3: 'Patient', 5: 'Receptionist', 6: 'Lab Staff', 7: 'Pharmacist', 8: 'Reporting' };
+// 1=Admin, 2=Doctor, 3=Patient, 5=Receptionist, 6=LabStaff, 7=Pharmacist, 8=Reporting, 9=SuperAdmin
+export const ROLES = { ADMIN: 1, DOCTOR: 2, PATIENT: 3, RECEPTIONIST: 5, LAB: 6, PHARMACIST: 7, REPORTING: 8, SUPER_ADMIN: 9 };
+export const ROLE_LABELS = { 1: 'Admin', 2: 'Doctor', 3: 'Patient', 5: 'Receptionist', 6: 'Lab Staff', 7: 'Pharmacist', 8: 'Reporting', 9: 'Super Admin' };
 
 export const isAdmin        = () => getUser()?.role_id === 1;
 export const isDoctor       = () => getUser()?.role_id === 2;
@@ -21,6 +21,7 @@ export const isReceptionist = () => getUser()?.role_id === 5;
 export const isLabStaff     = () => getUser()?.role_id === 6;
 export const isPharmacist   = () => getUser()?.role_id === 7;
 export const isReporting    = () => getUser()?.role_id === 8;
+export const isSuperAdmin   = () => getUser()?.role_id === 9 || getUser()?.original_role_id === 9;
 
 export const getDashboardRoute = (role_id) => {
   const routes = {
@@ -31,6 +32,7 @@ export const getDashboardRoute = (role_id) => {
     6: '/lab/dashboard',
     7: '/pharmacy/dashboard',
     8: '/admin/analytics',
+    9: '/cxadmin/organizations',
   };
   return routes[role_id] || '/login';
 };

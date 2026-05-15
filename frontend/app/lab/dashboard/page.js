@@ -36,14 +36,14 @@ export default function LabDashboard() {
   if (loading) return <div style={s.center}>Loading...</div>;
 
   return (
-    <div style={s.page}>
+    <div className="responsive-page" style={s.page}>
       <div style={{ marginBottom: 24 }}>
         <h1 style={s.h1}>Lab Dashboard</h1>
         <p style={s.sub}>Overview of lab operations</p>
       </div>
 
       {/* Summary Cards */}
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 16, marginBottom: 28 }}>
+      <div className="responsive-grid-4" style={{ marginBottom: 28 }}>
         {[
           { label: "Today's Orders", value: todayOrders.length, color: '#3b82f6', bg: '#eff6ff' },
           { label: 'Pending',        value: pendingCount,       color: '#f59e0b', bg: '#fffbeb' },
@@ -57,7 +57,7 @@ export default function LabDashboard() {
         ))}
       </div>
 
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 20 }}>
+      <div className="responsive-grid-2" style={{ gap: 20 }}>
         {/* Status Breakdown */}
         <div style={s.card}>
           <h2 style={s.h2}>Status Breakdown</h2>
@@ -84,7 +84,7 @@ export default function LabDashboard() {
 
         {/* Today's Orders */}
         <div style={s.card}>
-          <h2 style={s.h2}>Today's Orders</h2>
+          <h2 style={s.h2}>Today&apos;s Orders</h2>
           {todayOrders.length === 0
             ? <p style={s.empty}>No orders today yet.</p>
             : (
@@ -124,7 +124,8 @@ export default function LabDashboard() {
           {recentReports.length === 0
             ? <p style={s.empty}>No reports uploaded yet.</p>
             : (
-              <table style={s.table}>
+              <div className="responsive-scroll-x">
+              <table style={{ ...s.table, minWidth: 720 }}>
                 <thead>
                   <tr style={{ background: '#f8fafc' }}>
                     {['Patient', 'Test', 'Result', 'Uploaded At', 'Report'].map(h => <th key={h} style={s.th}>{h}</th>)}
@@ -153,6 +154,7 @@ export default function LabDashboard() {
                   ))}
                 </tbody>
               </table>
+              </div>
             )}
         </div>
       </div>
@@ -161,7 +163,7 @@ export default function LabDashboard() {
 }
 
 const s = {
-  page:  { padding: '2rem', maxWidth: 1400, margin: '0 auto' },
+  page:  { maxWidth: 1400, margin: '0 auto' },
   center:{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '60vh', color: '#64748b' },
   h1:    { fontSize: '1.5rem', fontWeight: 700, color: '#0f1f3d', margin: 0 },
   h2:    { fontSize: '1rem', fontWeight: 600, color: '#0f1f3d', margin: 0 },

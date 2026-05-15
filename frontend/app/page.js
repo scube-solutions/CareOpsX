@@ -1,6 +1,7 @@
 'use client';
 import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
+import Link from 'next/link';
 
 const N = '#0f1f3d', T = '#00b4a0', TB = '#13cfbd';
 
@@ -57,6 +58,7 @@ const SPECIALTIES = [
 export default function LandingPage() {
   const router = useRouter();
   const [scrolled, setScrolled] = useState(false);
+  const [menuOpen, setMenuOpen] = useState(false);
 
   useEffect(() => {
     const onScroll = () => setScrolled(window.scrollY > 20);
@@ -83,8 +85,8 @@ export default function LandingPage() {
         boxShadow: scrolled ? '0 2px 20px rgba(15,31,61,0.08)' : 'none',
         transition: 'all 0.22s ease',
       }}>
-        <a href="/" style={{ textDecoration: 'none', marginRight: 'auto' }}><Logo /></a>
-        <div style={{ display: 'flex', gap: '0.25rem' }}>
+        <Link href="/" style={{ textDecoration: 'none', marginRight: 'auto' }}><Logo /></Link>
+        <div className="landing-nav-links" style={{ display: 'flex', gap: '0.25rem' }}>
           {['features', 'how-it-works', 'specialties'].map(s => (
             <span key={s} onClick={() => scrollTo(s)} style={{ padding: '0.45rem 0.875rem', borderRadius: 8, fontSize: '0.875rem', fontWeight: 500, color: '#475569', cursor: 'pointer', transition: 'all 0.2s' }}
               onMouseEnter={e => { e.target.style.background = '#e6f7f5'; e.target.style.color = T; }}
@@ -93,7 +95,7 @@ export default function LandingPage() {
             </span>
           ))}
         </div>
-        <div style={{ display: 'flex', gap: '0.75rem' }}>
+        <div className="landing-nav-actions" style={{ display: 'flex', gap: '0.75rem' }}>
           <button onClick={() => router.push('/login')} style={{ padding: '0.5rem 1.1rem', borderRadius: 10, border: '1.5px solid #e2e8f0', background: 'transparent', color: '#475569', fontSize: '0.875rem', fontWeight: 600, cursor: 'pointer' }}>
             Sign In
           </button>
@@ -101,7 +103,32 @@ export default function LandingPage() {
             Book Appointment
           </button>
         </div>
+        <button className="landing-menu-button" onClick={() => setMenuOpen((value) => !value)} style={{ display: 'none', width: 42, height: 42, borderRadius: 12, border: '1px solid #dbe4ee', background: '#fff', alignItems: 'center', justifyContent: 'center', cursor: 'pointer' }}>
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#0f1f3d" strokeWidth="2" strokeLinecap="round">
+            <line x1="4" y1="7" x2="20" y2="7" />
+            <line x1="4" y1="12" x2="20" y2="12" />
+            <line x1="4" y1="17" x2="20" y2="17" />
+          </svg>
+        </button>
       </nav>
+
+      {menuOpen && (
+        <div className="landing-mobile-menu" style={{ position: 'fixed', top: 76, left: 16, right: 16, zIndex: 190, background: 'rgba(255,255,255,0.98)', border: '1px solid rgba(15,31,61,0.08)', borderRadius: 20, padding: '1rem', boxShadow: '0 20px 48px rgba(15,31,61,0.18)', backdropFilter: 'blur(12px)' }}>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+            {['features', 'how-it-works', 'specialties'].map((section) => (
+              <button key={section} onClick={() => scrollTo(section)} style={{ padding: '0.8rem 0.95rem', borderRadius: 12, border: '1px solid #e2e8f0', background: '#fff', color: N, textAlign: 'left', fontWeight: 600, cursor: 'pointer' }}>
+                {section === 'how-it-works' ? 'How It Works' : section.charAt(0).toUpperCase() + section.slice(1)}
+              </button>
+            ))}
+            <button onClick={() => { setMenuOpen(false); router.push('/login'); }} style={{ padding: '0.8rem 0.95rem', borderRadius: 12, border: '1px solid #e2e8f0', background: '#fff', color: '#475569', textAlign: 'left', fontWeight: 600, cursor: 'pointer' }}>
+              Sign In
+            </button>
+            <button onClick={() => { setMenuOpen(false); router.push('/patient/book'); }} style={{ padding: '0.85rem 1rem', borderRadius: 12, border: 'none', background: `linear-gradient(135deg, ${T}, ${TB})`, color: '#fff', textAlign: 'left', fontWeight: 700, cursor: 'pointer' }}>
+              Book Appointment
+            </button>
+          </div>
+        </div>
+      )}
 
       {/* HERO */}
       <section style={{
@@ -116,7 +143,7 @@ export default function LandingPage() {
         <div style={{ position: 'absolute', width: 600, height: 600, borderRadius: '50%', background: 'radial-gradient(circle, rgba(13,158,142,0.15) 0%, transparent 70%)', top: -150, right: -150, pointerEvents: 'none' }} />
         <div style={{ position: 'absolute', width: 350, height: 350, borderRadius: '50%', background: 'radial-gradient(circle, rgba(13,158,142,0.12) 0%, transparent 70%)', bottom: -80, left: '10%', pointerEvents: 'none' }} />
 
-        <div style={{ position: 'relative', zIndex: 1, maxWidth: 1200, margin: '0 auto', width: '100%', padding: '3rem 5%', display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '4rem', alignItems: 'center' }}>
+        <div className="hero-grid" style={{ position: 'relative', zIndex: 1, maxWidth: 1200, margin: '0 auto', width: '100%', padding: '3rem 5%', display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '4rem', alignItems: 'center' }}>
           <div>
             <div style={{ display: 'inline-flex', alignItems: 'center', gap: '0.5rem', background: 'rgba(13,158,142,0.15)', border: '1px solid rgba(13,158,142,0.3)', borderRadius: 99, padding: '0.35rem 1rem', fontSize: '0.75rem', fontWeight: 600, color: TB, letterSpacing: '0.06em', marginBottom: '1.5rem' }}>
               <span style={{ width: 6, height: 6, borderRadius: '50%', background: TB, animation: 'pulse 2s infinite', display: 'inline-block' }} />
@@ -138,7 +165,7 @@ export default function LandingPage() {
                 Admin Login →
               </button>
             </div>
-            <div style={{ display: 'flex', gap: '2.5rem', marginTop: '3rem', paddingTop: '2.5rem', borderTop: '1px solid rgba(255,255,255,0.1)' }}>
+            <div className="hero-stats" style={{ display: 'flex', gap: '2.5rem', marginTop: '3rem', paddingTop: '2.5rem', borderTop: '1px solid rgba(255,255,255,0.1)' }}>
               {[['50K+', 'Appointments Booked'], ['200+', 'Specialist Doctors'], ['98%', 'Patient Satisfaction']].map(([v, l]) => (
                 <div key={l}>
                   <div style={{ fontFamily: 'var(--font-display)', fontSize: '1.8rem', color: '#fff' }}>{v}</div>
@@ -151,7 +178,7 @@ export default function LandingPage() {
           {/* Floating card */}
           <div style={{ animation: 'float 6s ease-in-out infinite' }}>
             <div style={{ background: 'rgba(255,255,255,0.07)', backdropFilter: 'blur(12px)', border: '1px solid rgba(255,255,255,0.12)', borderRadius: 24, padding: '1.75rem' }}>
-              <div style={{ fontSize: '0.7rem', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.08em', color: 'rgba(255,255,255,0.45)', marginBottom: '1.25rem' }}>Today's Appointments</div>
+              <div style={{ fontSize: '0.7rem', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.08em', color: 'rgba(255,255,255,0.45)', marginBottom: '1.25rem' }}>Today&apos;s Appointments</div>
               {[['AK', '#0d9e8e', 'Dr. Arjun Kumar', 'Cardiology', '09:00 AM'], ['PS', '#8b5cf6', 'Dr. Priya Sharma', 'Neurology', '10:30 AM'], ['RN', '#f59e0b', 'Dr. Ravi Nair', 'Orthopedics', '02:00 PM']].map(([av, color, name, spec, time]) => (
                 <div key={name} style={{ display: 'flex', alignItems: 'center', gap: '0.875rem', padding: '0.75rem', borderRadius: 12, background: 'rgba(255,255,255,0.06)', marginBottom: '0.5rem', border: '1px solid rgba(255,255,255,0.06)' }}>
                   <div style={{ width: 36, height: 36, borderRadius: '50%', background: color, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '0.72rem', fontWeight: 700, color: '#fff', flexShrink: 0 }}>{av}</div>
@@ -168,7 +195,16 @@ export default function LandingPage() {
         <style>{`
           @keyframes float { 0%,100%{transform:translateY(0)} 50%{transform:translateY(-12px)} }
           @keyframes pulse { 0%,100%{opacity:1;transform:scale(1)} 50%{opacity:.6;transform:scale(1.3)} }
-          @media(max-width:900px){.hero-grid{grid-template-columns:1fr!important}}
+          @media (max-width: 960px) {
+            .landing-nav-links,
+            .landing-nav-actions { display: none !important; }
+            .landing-menu-button { display: inline-flex !important; }
+            .hero-grid { grid-template-columns: 1fr !important; gap: 2rem !important; padding-top: 2rem !important; }
+            .hero-stats { gap: 1rem !important; flex-wrap: wrap; }
+          }
+          @media (max-width: 640px) {
+            .landing-mobile-menu { top: 72px !important; left: 12px !important; right: 12px !important; }
+          }
         `}</style>
       </section>
 

@@ -1,12 +1,11 @@
-const supabase = require('../utils/supabase');
 
-const attachDoctorNames = async (rows, doctorIdField = 'doctor_id') => {
+const attachDoctorNames = async (rows, doctorIdField = 'doctor_id', db) => {
   const ids = [...new Set(rows.map(r => r[doctorIdField]).filter(Boolean))];
   if (!ids.length) return {};
-  const { data: doctors } = await supabase.from('doctors').select('id, user_id').in('id', ids);
+  const { data: doctors } = await db.from('doctors').select('id, user_id').in('id', ids);
   if (!doctors?.length) return {};
   const userIds = [...new Set(doctors.map(d => d.user_id).filter(Boolean))];
-  const { data: users } = await supabase.from('users').select('id, first_name, last_name').in('id', userIds);
+  const { data: users } = await db.from('users').select('id, first_name, last_name').in('id', userIds);
   const userMap = {};
   (users || []).forEach(u => { userMap[u.id] = u; });
   const nameMap = {};
@@ -20,6 +19,7 @@ const attachDoctorNames = async (rows, doctorIdField = 'doctor_id') => {
 // ── KPI Dashboard Summary ─────────────────────────────────────────────────────
 const getDashboard = async (req, res) => {
   try {
+    const supabase = req.db;
     const { date_from, date_to, branch_id, department_id, doctor_id } = req.query;
     const today = new Date().toISOString().split('T')[0];
     const from = date_from || today;
@@ -80,6 +80,7 @@ const getDashboard = async (req, res) => {
 // ── Revenue by Department / Doctor ────────────────────────────────────────────
 const getRevenueAnalytics = async (req, res) => {
   try {
+    const supabase = req.db;
     const { date_from, date_to, group_by = 'doctor' } = req.query;
     const today = new Date().toISOString().split('T')[0];
     const from = date_from || today;
@@ -100,7 +101,7 @@ const getRevenueAnalytics = async (req, res) => {
       (consults || []).forEach(c => { consultDocMap[c.id] = c.doctor_id; });
     }
     const invWithDoctor = (invoices || []).map(i => ({ ...i, doctor_id: consultDocMap[i.consultation_id] || null }));
-    const nameMap = await attachDoctorNames(invWithDoctor.filter(i => i.doctor_id));
+    const nameMap = await attachDoctorNames(invWithDoctor.filter(i => i.doctor_id, supabase));
 
     const grouped = {};
     invWithDoctor.forEach(inv => {
@@ -123,6 +124,7 @@ const getRevenueAnalytics = async (req, res) => {
 // ── Patient Volume ────────────────────────────────────────────────────────────
 const getPatientVolume = async (req, res) => {
   try {
+    const supabase = req.db;
     const { date_from, date_to } = req.query;
     const today = new Date().toISOString().split('T')[0];
     const thirtyDaysAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
@@ -152,6 +154,7 @@ const getPatientVolume = async (req, res) => {
 // ── Doctor Performance ────────────────────────────────────────────────────────
 const getDoctorPerformance = async (req, res) => {
   try {
+    const supabase = req.db;
     const { date_from, date_to } = req.query;
     const today = new Date().toISOString().split('T')[0];
     const thirtyDaysAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
@@ -163,7 +166,7 @@ const getDoctorPerformance = async (req, res) => {
 
     if (error) throw error;
 
-    const nameMap = await attachDoctorNames(consultations || []);
+    const nameMap = await attachDoctorNames(consultations || [], supabase);
 
     // Fetch invoices linked to these consultations for revenue
     const consultIds = [...new Set((consultations || []).map(c => c.id).filter(Boolean))];
@@ -198,6 +201,7 @@ const getDoctorPerformance = async (req, res) => {
 // ── Lab Summary ───────────────────────────────────────────────────────────────
 const getLabSummary = async (req, res) => {
   try {
+    const supabase = req.db;
     const { date_from, date_to } = req.query;
     const today = new Date().toISOString().split('T')[0];
 
@@ -227,6 +231,7 @@ const getLabSummary = async (req, res) => {
 // ── Pharmacy Summary ──────────────────────────────────────────────────────────
 const getPharmacySummary = async (req, res) => {
   try {
+    const supabase = req.db;
     const { date_from, date_to } = req.query;
     const today = new Date().toISOString().split('T')[0];
 
@@ -250,6 +255,7 @@ const getPharmacySummary = async (req, res) => {
 // ── Follow-up Compliance ──────────────────────────────────────────────────────
 const getFollowUpSummary = async (req, res) => {
   try {
+    const supabase = req.db;
     const { date_from, date_to } = req.query;
     const today = new Date().toISOString().split('T')[0];
 

@@ -325,6 +325,8 @@ export default function PatientDashboard() {
   const router = useRouter();
   const [user, setUser]                 = useState(null);
   const [collapsed, setCollapsed]       = useState(true);
+  const [mobileNavOpen, setMobileNavOpen] = useState(false);
+  const [isMobile, setIsMobile]         = useState(false);
   const [section, setSection]           = useState('overview');
   const [appointments, setAppointments] = useState([]);
   const [loading, setLoading]           = useState(true);
@@ -354,6 +356,13 @@ export default function PatientDashboard() {
     };
     load();
   }, [user]);
+
+  useEffect(() => {
+    const updateViewport = () => setIsMobile(window.innerWidth <= 1024);
+    updateViewport();
+    window.addEventListener('resize', updateViewport);
+    return () => window.removeEventListener('resize', updateViewport);
+  }, []);
 
   const now = new Date();
   const upcoming      = appointments.filter(a => (a.status === 'booked' || a.status === 'confirmed') && new Date(a.appointment_date) >= now);
@@ -393,22 +402,33 @@ export default function PatientDashboard() {
 
   return (
     <div style={{ display: 'flex', minHeight: '100vh', background: T.bg, fontFamily: T.body }}>
-      <Sidebar active={section} onNav={setSection} user={user} collapsed={collapsed} onToggle={() => setCollapsed(c => !c)} />
+      {!isMobile && <Sidebar active={section} onNav={setSection} user={user} collapsed={collapsed} onToggle={() => setCollapsed(c => !c)} />}
+      {isMobile && mobileNavOpen && <div onClick={() => setMobileNavOpen(false)} style={{ position: 'fixed', inset: 0, background: 'rgba(15,31,61,.45)', zIndex: 40 }} />}
+      {isMobile && (
+        <div style={{ position: 'fixed', top: 0, bottom: 0, left: mobileNavOpen ? 0 : '-100%', width: 'min(320px, 86vw)', zIndex: 45, transition: 'left .22s ease' }}>
+          <Sidebar active={section} onNav={(next) => { setSection(next); setMobileNavOpen(false); }} user={user} collapsed={false} onToggle={() => setMobileNavOpen(false)} />
+        </div>
+      )}
 
-      <main style={{ flex: 1, overflow: 'auto' }}>
-        <header style={{ background: T.card, borderBottom: `1px solid ${T.border}`, padding: '14px 28px', display: 'flex', alignItems: 'center', gap: 12, position: 'sticky', top: 0, zIndex: 10 }}>
+      <main style={{ flex: 1, overflow: 'auto', minWidth: 0 }}>
+        <header style={{ background: T.card, borderBottom: `1px solid ${T.border}`, padding: isMobile ? '14px 16px' : '14px 28px', display: 'flex', alignItems: 'center', gap: 12, position: 'sticky', top: 0, zIndex: 10 }}>
+          {isMobile && (
+            <button onClick={() => setMobileNavOpen(true)} style={{ width: 38, height: 38, borderRadius: 10, border: `1px solid ${T.border}`, background: '#fff', color: T.navy, cursor: 'pointer', fontSize: 18, flexShrink: 0 }}>
+              ☰
+            </button>
+          )}
           {['upcoming','completed','doctors'].includes(section) && (
             <button onClick={() => setSection('overview')} style={{ background: 'none', border: 'none', color: T.muted, cursor: 'pointer', fontSize: 18, padding: '0 4px' }}>←</button>
           )}
           <span style={{ fontFamily: T.display, fontWeight: 700, color: T.navy, fontSize: 17 }}>{headerTitle}</span>
           <a href="/patient/book" style={{
             marginLeft: 'auto', background: T.teal, color: '#fff', border: 'none',
-            borderRadius: 8, padding: '8px 18px', fontSize: 13, fontWeight: 600,
+            borderRadius: 8, padding: isMobile ? '8px 12px' : '8px 18px', fontSize: 13, fontWeight: 600,
             cursor: 'pointer', textDecoration: 'none', fontFamily: T.body,
           }}>+ Book Appointment</a>
         </header>
 
-        <div style={{ padding: '28px 28px' }}>
+        <div style={{ padding: isMobile ? '18px 16px 24px' : '28px 28px' }}>
 
           {/* ── Overview ── */}
           {section === 'overview' && (
@@ -417,11 +437,11 @@ export default function PatientDashboard() {
                 <h1 style={{ fontFamily: T.display, fontSize: 24, fontWeight: 700, color: T.navy, margin: 0 }}>
                   {greeting()}, {user.name?.split(' ')[0] || 'there'} 👋
                 </h1>
-                <p style={{ color: T.muted, fontSize: 14, marginTop: 4 }}>Here's your health overview</p>
+                <p style={{ color: T.muted, fontSize: 14, marginTop: 4 }}>Here&apos;s your health overview</p>
               </div>
 
               {/* Stat cards — clickable */}
-              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 16, marginBottom: 28 }}>
+              <div className="responsive-grid-3" style={{ marginBottom: 28 }}>
                 {statCards.map(sc => (
                   <div key={sc.label}
                     onClick={() => setSection(sc.section)}
@@ -553,7 +573,7 @@ export default function PatientDashboard() {
                   <p style={{ color: T.muted }}>No doctors visited yet.</p>
                 </div>
               ) : (
-                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: 14 }}>
+                <div className="responsive-grid-2" style={{ gap: 14 }}>
                   {uniqueDoctors.map(a => {
                     const u = a.doctors?.users;
                     const full = `${u?.first_name || ''} ${u?.last_name || ''}`.trim();

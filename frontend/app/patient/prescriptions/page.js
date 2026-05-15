@@ -55,7 +55,7 @@ export default function PatientPrescriptionsPage() {
           <p style={{ color: '#64748b' }}>No prescriptions yet.</p>
         </div>
       ) : (
-        <div style={{ display: 'grid', gridTemplateColumns: selected ? '1fr 380px' : '1fr', gap: 20 }}>
+        <div className={selected ? 'responsive-detail-380' : ''} style={!selected ? { display: 'grid', gridTemplateColumns: '1fr', gap: 20 } : undefined}>
           {/* List */}
           <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
             {prescriptions.map(p => {
@@ -129,7 +129,7 @@ export default function PatientPrescriptionsPage() {
 
               {selected.notes && (
                 <div style={{ marginTop: 14, padding: '10px 12px', background: '#fffbeb', border: '1px solid #fde68a', borderRadius: 8, fontSize: '.875rem', color: '#92400e' }}>
-                  <strong>Doctor's Note:</strong> {selected.notes}
+                  <strong>Doctor&apos;s Note:</strong> {selected.notes}
                 </div>
               )}
             </div>

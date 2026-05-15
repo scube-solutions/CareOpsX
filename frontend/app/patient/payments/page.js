@@ -132,7 +132,7 @@ export default function PatientPaymentsPage() {
         </div>
 
         {/* Summary cards */}
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 14, marginBottom: 24 }}>
+        <div className="responsive-grid-3" style={{ marginBottom: 24 }}>
           {[
             { label: 'Total Paid',     value: `₹${totalPaid.toFixed(2)}`,  color: '#0f766e', bg: '#f0fdfb', border: '#99f6e4' },
             { label: 'Balance Due',    value: `₹${totalDue.toFixed(2)}`,   color: totalDue > 0 ? '#b91c1c' : '#0f766e', bg: totalDue > 0 ? '#fef2f2' : '#f0fdf4', border: totalDue > 0 ? '#fecaca' : '#bbf7d0' },
@@ -161,7 +161,7 @@ export default function PatientPaymentsPage() {
             <p style={{ color: '#64748b' }}>No payment records in this category.</p>
           </div>
         ) : (
-          <div style={{ display: 'grid', gridTemplateColumns: selected ? '1fr 400px' : '1fr', gap: 20 }}>
+          <div className={selected ? 'responsive-detail-400' : ''} style={!selected ? { display: 'grid', gridTemplateColumns: '1fr', gap: 20 } : undefined}>
             {/* List */}
             <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
               {filtered.map(rec => {

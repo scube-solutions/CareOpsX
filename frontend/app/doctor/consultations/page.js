@@ -205,7 +205,7 @@ export default function DoctorConsultationsPage() {
         </div>
       )}
 
-      <div style={{ display: 'grid', gridTemplateColumns: '360px 1fr', gap: 20 }}>
+      <div className="responsive-split-360">
         {/* Appointments list */}
         <div style={s.card}>
           <h2 style={s.h2}>Appointments ({appointments.length})</h2>

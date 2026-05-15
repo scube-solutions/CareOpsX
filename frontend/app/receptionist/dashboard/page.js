@@ -1,5 +1,6 @@
 'use client';
 import { useEffect, useState } from 'react';
+import Link from 'next/link';
 import { api } from '@/lib/api';
 
 const STATUS_STYLE = {
@@ -113,23 +114,23 @@ export default function ReceptionistDashboard() {
     );
 
   return (
-    <div style={s.page}>
+    <div className="responsive-page" style={s.page}>
       <style>{`@keyframes blink { 0%,100%{opacity:1} 50%{opacity:0} }`}</style>
 
       {/* Header */}
-      <div style={s.header}>
+      <div className="responsive-header-row" style={s.header}>
         <div>
           <h1 style={s.h1}>Reception Dashboard</h1>
           <p style={s.sub}>{new Date().toLocaleDateString('en-IN', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })}</p>
         </div>
-        <div style={{ display: 'flex', gap: 12 }}>
-          <a href="/receptionist/patients/new" style={s.btnPrimary}>+ New Patient</a>
+        <div className="responsive-actions-row">
+          <Link href="/receptionist/patients/new" style={s.btnPrimary}>+ New Patient</Link>
           <a href="/receptionist/queue" style={s.btnSecondary}>View Queue</a>
         </div>
       </div>
 
       {/* KPI Cards — clickable */}
-      <div style={s.grid3}>
+      <div className="responsive-grid-3" style={s.grid3}>
         {cards.map(c => (
           <div key={c.key} onClick={() => setModal(c.key)}
             style={{ ...s.card, borderTop: `4px solid ${c.color}`, cursor: 'pointer', transition: 'box-shadow .15s' }}
@@ -152,7 +153,8 @@ export default function ReceptionistDashboard() {
               {payRequests.length} Pending Payment Request{payRequests.length > 1 ? 's' : ''} — Collect at Reception
             </h2>
           </div>
-          <table style={s.table}>
+          <div className="responsive-scroll-x">
+          <table style={{ ...s.table, minWidth: 720 }}>
             <thead><tr style={{ background: '#fff3e8' }}>
               {['Patient', 'Phone', 'Doctor', 'Date & Time', 'Fee', 'Action'].map(h => <th key={h} style={s.th}>{h}</th>)}
             </tr></thead>
@@ -174,6 +176,7 @@ export default function ReceptionistDashboard() {
               ))}
             </tbody>
           </table>
+          </div>
         </div>
       )}
 
@@ -190,7 +193,8 @@ export default function ReceptionistDashboard() {
       {queue.length > 0 && (
         <div style={s.section}>
           <h2 style={{ ...s.h2, marginBottom: 14 }}>Upcoming Follow-ups (Next 3 Months)</h2>
-          <table style={s.table}>
+          <div className="responsive-scroll-x">
+          <table style={{ ...s.table, minWidth: 720 }}>
             <thead><tr>{['Patient', 'Phone', 'Follow-up Date', 'Disease Tag', 'Action'].map(h => <th key={h} style={s.th}>{h}</th>)}</tr></thead>
             <tbody>
               {queue.map(f => (
@@ -204,11 +208,12 @@ export default function ReceptionistDashboard() {
               ))}
             </tbody>
           </table>
+          </div>
         </div>
       )}
 
       {/* Bottom row */}
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16 }}>
+      <div className="responsive-grid-2" style={{ gap: 16 }}>
         <div style={s.card}>
           <h3 style={s.h3}>Quick Actions</h3>
           <div style={{ display: 'flex', flexDirection: 'column', gap: 10, marginTop: 12 }}>
@@ -255,7 +260,8 @@ export default function ReceptionistDashboard() {
       {modal === 'followups' && (
         <Modal title={`Upcoming Follow-ups (${queue.length})`} onClose={() => setModal(null)}>
           {queue.length === 0 ? <p style={s.empty}>No upcoming follow-ups.</p> : (
-            <table style={s.table}>
+            <div className="responsive-scroll-x">
+            <table style={{ ...s.table, minWidth: 640 }}>
               <thead><tr>{['Patient', 'Phone', 'Follow-up Date', 'Disease Tag'].map(h => <th key={h} style={s.th}>{h}</th>)}</tr></thead>
               <tbody>
                 {queue.map(f => (
@@ -268,6 +274,7 @@ export default function ReceptionistDashboard() {
                 ))}
               </tbody>
             </table>
+            </div>
           )}
         </Modal>
       )}
@@ -276,7 +283,7 @@ export default function ReceptionistDashboard() {
 }
 
 const s = {
-  page:        { padding: '2rem', maxWidth: 1200, margin: '0 auto' },
+  page:        { maxWidth: 1200, margin: '0 auto' },
   center:      { display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100vh', color: '#64748b' },
   header:      { display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 24 },
   h1:          { fontSize: '1.5rem', fontWeight: 700, color: '#0f1f3d', margin: 0 },

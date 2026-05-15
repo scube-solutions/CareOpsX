@@ -1,9 +1,9 @@
-const supabase = require('../utils/supabase');
 const { auditLog } = require('../middlewares/audit');
 
 // ── Templates ─────────────────────────────────────────────────────────────────
 const getTemplates = async (req, res) => {
   try {
+    const supabase = req.db;
     const { channel, event_type } = req.query;
     let query = supabase.from('notification_templates').select('*').eq('is_active', true).order('event_type');
     if (channel) query = query.eq('channel', channel);
@@ -18,6 +18,7 @@ const getTemplates = async (req, res) => {
 
 const createTemplate = async (req, res) => {
   try {
+    const supabase = req.db;
     const { data, error } = await supabase.from('notification_templates').insert([{ ...req.body, is_active: true, created_by: req.user.id, created_at: new Date().toISOString() }]).select('*').single();
     if (error) throw error;
     return res.status(201).json({ message: 'Template created', template: data });
@@ -28,6 +29,7 @@ const createTemplate = async (req, res) => {
 
 const updateTemplate = async (req, res) => {
   try {
+    const supabase = req.db;
     const { data, error } = await supabase.from('notification_templates').update({ ...req.body, updated_by: req.user.id, updated_at: new Date().toISOString() }).eq('id', req.params.id).select('*').single();
     if (error) throw error;
     return res.json({ message: 'Template updated', template: data });
@@ -39,6 +41,7 @@ const updateTemplate = async (req, res) => {
 // ── Send Manual Notification ──────────────────────────────────────────────────
 const sendNotification = async (req, res) => {
   try {
+    const supabase = req.db;
     const { patient_id, channel, message, subject, event_type, recipient_phone, recipient_email } = req.body;
     if (!message || !channel) return res.status(400).json({ error: 'message and channel are required' });
 
@@ -84,6 +87,7 @@ const sendNotification = async (req, res) => {
 // ── Get Notification Logs ─────────────────────────────────────────────────────
 const getNotificationLogs = async (req, res) => {
   try {
+    const supabase = req.db;
     const { patient_id, status, channel, event_type, page = 1, limit = 30 } = req.query;
     const offset = (parseInt(page) - 1) * parseInt(limit);
 
@@ -108,6 +112,7 @@ const getNotificationLogs = async (req, res) => {
 // ── Retry Failed Notification ─────────────────────────────────────────────────
 const retryNotification = async (req, res) => {
   try {
+    const supabase = req.db;
     const { id } = req.params;
     const { data: log } = await supabase.from('notification_logs').select('*').eq('id', id).single();
     if (!log) return res.status(404).json({ error: 'Notification log not found' });

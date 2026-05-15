@@ -159,7 +159,7 @@ export default function ReceptionistBillingPage() {
 
       {/* ── COLLECT TAB ── */}
       {tab === 'collect' && (
-        <div style={{ display: 'grid', gridTemplateColumns: '280px 1fr', gap: 20 }}>
+        <div className="responsive-split-280">
           {/* Left column */}
           <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
             {/* Patient search */}

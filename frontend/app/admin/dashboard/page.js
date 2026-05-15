@@ -135,7 +135,7 @@ export default function AdminDashboardPage() {
   };
 
   return (
-    <div style={{ padding: 28, fontFamily: T.body, background: T.bg, minHeight: '100vh' }}>
+    <div className="responsive-page" style={{ fontFamily: T.body, background: T.bg, minHeight: '100vh' }}>
       {/* Header greeting */}
       <div style={{ marginBottom: 24 }}>
         <h1 style={{ margin: 0, fontFamily: T.display, fontSize: 26, color: T.navy, fontWeight: 700 }}>
@@ -145,7 +145,7 @@ export default function AdminDashboardPage() {
       </div>
 
       {/* KPI cards */}
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, minmax(0,1fr))', gap: 16, marginBottom: 24 }}>
+      <div className="responsive-grid-4" style={{ marginBottom: 24 }}>
         {stats.map((s) => (
           <div key={s.label} style={{
             background: T.card, borderRadius: 14, padding: '18px 20px',
@@ -170,7 +170,7 @@ export default function AdminDashboardPage() {
       </div>
 
       {/* Middle row */}
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16, marginBottom: 24 }}>
+      <div className="responsive-grid-2" style={{ gap: 16, marginBottom: 24 }}>
         {/* Appointments This Week */}
         <div style={{ background: T.card, borderRadius: 14, boxShadow: '0 1px 4px rgba(0,0,0,.06)', overflow: 'hidden' }}>
           <div style={{ padding: '14px 20px', borderBottom: `1px solid ${T.border}` }}>
@@ -187,7 +187,7 @@ export default function AdminDashboardPage() {
                 const sc = statusColor(a.status);
                 return (
                   <div key={a.id} style={{
-                    display: 'flex', alignItems: 'center', gap: 12,
+                    display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap',
                     padding: '10px 20px', borderBottom: `1px solid ${T.border}`,
                   }}>
                     <div style={{ flex: 1, minWidth: 0 }}>
@@ -214,7 +214,7 @@ export default function AdminDashboardPage() {
           <div style={{ padding: '14px 20px', borderBottom: `1px solid ${T.border}` }}>
             <span style={{ fontFamily: T.display, fontWeight: 700, color: T.navy, fontSize: 15 }}>Quick Actions</span>
           </div>
-          <div style={{ padding: 20, display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+          <div className="responsive-grid-2" style={{ padding: 20, gap: 12 }}>
             {[
               {
                 label: '+ Add Doctor', href: '/admin/doctors', primary: true,
@@ -253,7 +253,7 @@ export default function AdminDashboardPage() {
       {/* Today's Appointments table */}
       <div style={{ background: T.card, borderRadius: 14, boxShadow: '0 1px 4px rgba(0,0,0,.06)', overflow: 'hidden' }}>
         <div style={{ padding: '14px 20px', borderBottom: `1px solid ${T.border}`, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-          <span style={{ fontFamily: T.display, fontWeight: 700, color: T.navy, fontSize: 15 }}>Today's Appointments</span>
+          <span style={{ fontFamily: T.display, fontWeight: 700, color: T.navy, fontSize: 15 }}>Today&apos;s Appointments</span>
           <a href="/admin/appointments" style={{ fontSize: 13, color: T.muted, textDecoration: 'none', fontWeight: 500 }}>View All</a>
         </div>
         {loading ? (
@@ -262,7 +262,7 @@ export default function AdminDashboardPage() {
           <div style={{ padding: '32px 20px', color: T.muted, fontSize: 13, textAlign: 'center' }}>No appointments today.</div>
         ) : (
           <div style={{ overflowX: 'auto' }}>
-            <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+            <table style={{ width: '100%', minWidth: 760, borderCollapse: 'collapse' }}>
               <thead>
                 <tr style={{ background: '#f8fafc' }}>
                   {['PATIENT', 'DOCTOR', 'SPECIALTY', 'TIME', 'STATUS'].map((h) => (
