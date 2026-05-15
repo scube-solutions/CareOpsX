@@ -50,7 +50,7 @@ export default function DropOffPage() {
 
       {/* Summary Cards */}
       {summary && (
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 14, marginBottom: 24 }}>
+        <div className="responsive-grid-4" style={{ marginBottom: 24 }}>
           {[
             { label: 'Total Tracked', value: summary.total, color: '#64748b' },
             { label: 'At Risk', value: summary.at_risk, color: '#ef4444' },
@@ -77,7 +77,7 @@ export default function DropOffPage() {
         ))}
       </div>
 
-      <div style={{ display: 'grid', gridTemplateColumns: selected ? '1fr 380px' : '1fr', gap: 20 }}>
+      <div className={selected ? 'responsive-detail-380' : ''} style={!selected ? { display: 'grid', gridTemplateColumns: '1fr', gap: 20 } : undefined}>
         <div style={s.card}>
           <h2 style={s.h2}>Watchlist ({watchlist.length})</h2>
           {watchlist.length === 0 ? <p style={s.empty}>No patients on watchlist</p> : (

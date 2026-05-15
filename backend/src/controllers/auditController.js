@@ -1,8 +1,8 @@
-const supabase = require('../utils/supabase');
 
 // ── Get Audit Logs ────────────────────────────────────────────────────────────
 const getAuditLogs = async (req, res) => {
   try {
+    const supabase = req.db;
     const { user_id, module, action, entity_type, entity_id, date_from, date_to, page = 1, limit = 50 } = req.query;
     const offset = (parseInt(page) - 1) * parseInt(limit);
 
@@ -30,6 +30,7 @@ const getAuditLogs = async (req, res) => {
 // ── Get Audit Log By ID ───────────────────────────────────────────────────────
 const getAuditLogById = async (req, res) => {
   try {
+    const supabase = req.db;
     const { data, error } = await supabase.from('audit_logs').select('*').eq('id', req.params.id).single();
     if (error || !data) return res.status(404).json({ error: 'Audit log not found' });
     return res.json({ log: data });
@@ -41,6 +42,7 @@ const getAuditLogById = async (req, res) => {
 // ── Activity Summary ──────────────────────────────────────────────────────────
 const getActivitySummary = async (req, res) => {
   try {
+    const supabase = req.db;
     const today = new Date().toISOString().split('T')[0];
     const { data, error } = await supabase.from('audit_logs')
       .select('action, module, role_name, created_at')

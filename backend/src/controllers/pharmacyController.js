@@ -1,11 +1,14 @@
-const supabase = require('../utils/supabase');
 const { auditLog } = require('../middlewares/audit');
+const { getUserOrganizationId } = require('../utils/organizationAccess');
 
 // ── Inventory ─────────────────────────────────────────────────────────────────
 const getInventory = async (req, res) => {
   try {
+    const supabase = req.db;
     const { search, low_stock, expiring_soon } = req.query;
+    const organizationId = getUserOrganizationId(req);
     let query = supabase.from('pharmacy_inventory').select('*').eq('is_active', true).order('medicine_name');
+    if (organizationId) query = query.eq('organization_id', organizationId);
     if (search) query = query.ilike('medicine_name', `%${search}%`);
     if (low_stock === 'true') query = query.lte('current_stock', supabase.raw('reorder_level'));
 
@@ -29,7 +32,11 @@ const getInventory = async (req, res) => {
 
 const getMedicineById = async (req, res) => {
   try {
-    const { data, error } = await supabase.from('pharmacy_inventory').select('*').eq('id', req.params.id).single();
+    const supabase = req.db;
+    const organizationId = getUserOrganizationId(req);
+    let q = supabase.from('pharmacy_inventory').select('*').eq('id', req.params.id);
+    if (organizationId) q = q.eq('organization_id', organizationId);
+    const { data, error } = await q.single();
     if (error || !data) return res.status(404).json({ error: 'Medicine not found' });
     return res.json({ medicine: data });
   } catch (err) {
@@ -39,11 +46,11 @@ const getMedicineById = async (req, res) => {
 
 const getMedicineByBarcode = async (req, res) => {
   try {
-    const { data, error } = await supabase.from('pharmacy_inventory')
-      .select('*')
-      .eq('barcode', req.params.barcode)
-      .eq('is_active', true)
-      .maybeSingle();
+    const supabase = req.db;
+    const organizationId = getUserOrganizationId(req);
+    let barcodeQuery = supabase.from('pharmacy_inventory').select('*').eq('barcode', req.params.barcode).eq('is_active', true);
+    if (organizationId) barcodeQuery = barcodeQuery.eq('organization_id', organizationId);
+    const { data, error } = await barcodeQuery.maybeSingle();
     if (error) throw error;
     if (!data) return res.json({ found: false, medicine: null });
     return res.json({ found: true, medicine: data });
@@ -54,15 +61,18 @@ const getMedicineByBarcode = async (req, res) => {
 
 const addMedicine = async (req, res) => {
   try {
+    const supabase = req.db;
     const { medicine_name, category, unit, current_stock, reorder_level, unit_price, batch_number, expiry_date, manufacturer, barcode } = req.body;
     if (!medicine_name) return res.status(400).json({ error: 'medicine_name is required' });
 
+    const organizationId = getUserOrganizationId(req);
     const { data, error } = await supabase.from('pharmacy_inventory').insert([{
       medicine_name, category: category || null, unit: unit || 'tablet',
       current_stock: current_stock || 0, reorder_level: reorder_level || 10,
       unit_price: unit_price || 0, batch_number: batch_number || null,
       expiry_date: expiry_date || null, manufacturer: manufacturer || null,
       barcode: barcode || null,
+      organization_id: organizationId || null,
       is_active: true, created_by: req.user.id, created_at: new Date().toISOString()
     }]).select('*').single();
 
@@ -76,6 +86,7 @@ const addMedicine = async (req, res) => {
 
 const updateMedicine = async (req, res) => {
   try {
+    const supabase = req.db;
     const { data, error } = await supabase.from('pharmacy_inventory').update({ ...req.body, updated_by: req.user.id, updated_at: new Date().toISOString() }).eq('id', req.params.id).select('*').single();
     if (error) throw error;
     await auditLog({ user_id: req.user.id, role_id: req.user.role_id, action: 'UPDATE_MEDICINE', module: 'Pharmacy', entity_type: 'pharmacy_inventory', entity_id: req.params.id });
@@ -87,6 +98,7 @@ const updateMedicine = async (req, res) => {
 
 const addStock = async (req, res) => {
   try {
+    const supabase = req.db;
     const { id } = req.params;
     const { quantity, batch_number, expiry_date, unit_price, notes } = req.body;
     if (!quantity || quantity <= 0) return res.status(400).json({ error: 'quantity must be positive' });
@@ -113,13 +125,16 @@ const addStock = async (req, res) => {
 // ── Pharmacy Invoices ─────────────────────────────────────────────────────────
 const getPharmacyInvoices = async (req, res) => {
   try {
+    const supabase = req.db;
     const { patient_id, date, status } = req.query;
     const today = date || new Date().toISOString().split('T')[0];
+    const organizationId = getUserOrganizationId(req);
 
     let query = supabase.from('pharmacy_invoices')
       .select('*, patients(first_name, last_name, patient_uid, phone), pharmacy_invoice_items(*)')
       .order('created_at', { ascending: false });
 
+    if (organizationId) query = query.eq('organization_id', organizationId);
     if (patient_id) query = query.eq('patient_id', patient_id);
     if (status) query = query.eq('status', status);
     if (!patient_id) query = query.gte('created_at', `${today}T00:00:00`).lte('created_at', `${today}T23:59:59`);
@@ -134,6 +149,7 @@ const getPharmacyInvoices = async (req, res) => {
 
 const createPharmacyInvoice = async (req, res) => {
   try {
+    const supabase = req.db;
     const { patient_id, prescription_id, consultation_id, items, discount, notes, payment_mode } = req.body;
     if (!patient_id || !items?.length) return res.status(400).json({ error: 'patient_id and items required' });
 
@@ -148,6 +164,7 @@ const createPharmacyInvoice = async (req, res) => {
     const discountAmt = discount || 0;
     const total = subtotal - discountAmt;
 
+    const organizationId = getUserOrganizationId(req);
     const { data: inv, error: invError } = await supabase.from('pharmacy_invoices').insert([{
       patient_id,
       prescription_id: prescription_id || null,
@@ -157,6 +174,7 @@ const createPharmacyInvoice = async (req, res) => {
       total_amount: total,
       status: 'pending',
       notes: notes || null,
+      organization_id: organizationId || null,
       created_by: req.user.id,
       created_at: new Date().toISOString()
     }]).select('*').single();
@@ -185,6 +203,7 @@ const createPharmacyInvoice = async (req, res) => {
 
 const dispensePharmacyInvoice = async (req, res) => {
   try {
+    const supabase = req.db;
     const { id } = req.params;
     const { payment_mode, amount_paid } = req.body;
 
@@ -217,7 +236,11 @@ const dispensePharmacyInvoice = async (req, res) => {
 
 const getStockAlerts = async (req, res) => {
   try {
-    const { data, error } = await supabase.from('pharmacy_inventory').select('*').eq('is_active', true);
+    const supabase = req.db;
+    const organizationId = getUserOrganizationId(req);
+    let alertQuery = supabase.from('pharmacy_inventory').select('*').eq('is_active', true);
+    if (organizationId) alertQuery = alertQuery.eq('organization_id', organizationId);
+    const { data, error } = await alertQuery;
     if (error) throw error;
 
     const thirtyDays = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
@@ -234,6 +257,7 @@ const getStockAlerts = async (req, res) => {
 // ── Patient: own pharmacy invoices ───────────────────────────────────────────
 const getMyInvoices = async (req, res) => {
   try {
+    const supabase = req.db;
     let { data: patRec } = await supabase.from('patients').select('id').eq('user_id', req.user.id).single();
 
     // Fallback: receptionist-created patients have user_id=null — match by email and link
@@ -263,11 +287,11 @@ const getMyInvoices = async (req, res) => {
 // ── Get Pending Prescriptions (for pharmacy to dispense) ─────────────────────
 const getPendingPrescriptions = async (req, res) => {
   try {
-    const { data: prescriptions, error } = await supabase
-      .from('prescriptions')
-      .select('*, prescription_items(*)')
-      .order('created_at', { ascending: false })
-      .limit(100);
+    const supabase = req.db;
+    const organizationId = getUserOrganizationId(req);
+    let prescQuery = supabase.from('prescriptions').select('*, prescription_items(*)').order('created_at', { ascending: false }).limit(100);
+    if (organizationId) prescQuery = prescQuery.eq('organization_id', organizationId);
+    const { data: prescriptions, error } = await prescQuery;
 
     if (error) throw error;
 
@@ -330,10 +354,12 @@ const getPendingPrescriptions = async (req, res) => {
 // ── Bulk Import Medicines ─────────────────────────────────────────────────────
 const bulkImportMedicines = async (req, res) => {
   try {
+    const supabase = req.db;
     const { medicines } = req.body;
     if (!Array.isArray(medicines) || !medicines.length)
       return res.status(400).json({ error: 'medicines array required' });
 
+    const organizationId = getUserOrganizationId(req);
     const rows = medicines
       .map(m => ({
         medicine_name:  (m.medicine_name || '').trim(),
@@ -346,6 +372,7 @@ const bulkImportMedicines = async (req, res) => {
         expiry_date:    (m.expiry_date || '').trim()  || null,
         manufacturer:   (m.manufacturer || '').trim() || null,
         barcode:        (m.barcode || '').trim() || null,
+        organization_id: organizationId || null,
         is_active:      true,
         created_by:     req.user.id,
         created_at:     new Date().toISOString(),

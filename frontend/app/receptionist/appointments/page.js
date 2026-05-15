@@ -1,6 +1,7 @@
 'use client';
 import { useState, useEffect, useCallback, Suspense } from 'react';
 import { useSearchParams } from 'next/navigation';
+import Link from 'next/link';
 import { api } from '@/lib/api';
 
 function AppointmentsContent() {
@@ -134,7 +135,7 @@ function AppointmentsContent() {
       </div>
 
       {tab === 'book' && (
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 20 }}>
+        <div className="responsive-grid-2">
           {/* Left: Patient + Doctor + Date */}
           <div style={s.card}>
             <h2 style={s.h2}>Patient</h2>
@@ -158,7 +159,7 @@ function AppointmentsContent() {
                   </div>
                 ))}
                 {patientResults.length === 0 && patientQuery && (
-                  <p style={{ fontSize: 12, color: '#64748b' }}>No results. <a href="/receptionist/patients/new" style={{ color: '#00b4a0' }}>Register new patient →</a></p>
+                  <p style={{ fontSize: 12, color: '#64748b' }}>No results. <Link href="/receptionist/patients/new" style={{ color: '#00b4a0' }}>Register new patient →</Link></p>
                 )}
               </>
             )}

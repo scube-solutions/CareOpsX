@@ -1,4 +1,3 @@
-const supabase = require('../utils/supabase');
 const { auditLog } = require('../middlewares/audit');
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -39,6 +38,7 @@ const attachRelated = async (rows) => {
 // ── Get Follow-up Plans ───────────────────────────────────────────────────────
 const getFollowUps = async (req, res) => {
   try {
+    const supabase = req.db;
     const { patient_id, status, doctor_id, date_from, date_to, missed_only } = req.query;
     let query = supabase.from('follow_up_plans')
       .select('*')
@@ -63,6 +63,7 @@ const getFollowUps = async (req, res) => {
 // ── Get Single Follow-up ──────────────────────────────────────────────────────
 const getFollowUpById = async (req, res) => {
   try {
+    const supabase = req.db;
     const { data, error } = await supabase.from('follow_up_plans')
       .select('*')
       .eq('id', req.params.id).single();
@@ -77,6 +78,7 @@ const getFollowUpById = async (req, res) => {
 // ── Create Follow-up Plan ─────────────────────────────────────────────────────
 const createFollowUp = async (req, res) => {
   try {
+    const supabase = req.db;
     const { patient_id, doctor_id, consultation_id, follow_up_date, required_tests, medication_refill, notes, disease_tag } = req.body;
     if (!patient_id || !follow_up_date) return res.status(400).json({ error: 'patient_id and follow_up_date are required' });
 
@@ -111,6 +113,7 @@ const createFollowUp = async (req, res) => {
 // ── Update Follow-up Status ───────────────────────────────────────────────────
 const updateFollowUp = async (req, res) => {
   try {
+    const supabase = req.db;
     const { id } = req.params;
     const { data: old } = await supabase.from('follow_up_plans').select('*').eq('id', id).single();
     const { data, error } = await supabase.from('follow_up_plans').update({ ...req.body, updated_by: req.user.id, updated_at: new Date().toISOString() }).eq('id', id).select('*').single();
@@ -125,6 +128,7 @@ const updateFollowUp = async (req, res) => {
 // ── Get Missed Follow-ups ─────────────────────────────────────────────────────
 const getMissedFollowUps = async (req, res) => {
   try {
+    const supabase = req.db;
     const today = new Date().toISOString().split('T')[0];
     const { data, error } = await supabase.from('follow_up_plans')
       .select('*')
@@ -143,6 +147,7 @@ const getMissedFollowUps = async (req, res) => {
 // ── Get Upcoming Follow-ups (next 90 days) ────────────────────────────────────
 const getUpcomingFollowUps = async (req, res) => {
   try {
+    const supabase = req.db;
     const today   = new Date().toISOString().split('T')[0];
     const end     = new Date(Date.now() + 90 * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
     const { data, error } = await supabase.from('follow_up_plans')
@@ -163,6 +168,7 @@ const getUpcomingFollowUps = async (req, res) => {
 // ── Patient: My Follow-ups ────────────────────────────────────────────────────
 const getMyFollowUps = async (req, res) => {
   try {
+    const supabase = req.db;
     const { data: patient } = await supabase.from('patients').select('id').eq('user_id', req.user.id).single();
     if (!patient) return res.json({ follow_ups: [] });
 

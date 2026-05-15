@@ -159,9 +159,45 @@ const sendPasswordResetEmail = async (email, name, resetUrl) => {
   await sendEmail(email, subject, text);
 };
 
+const notifyOrgOnboarded = async ({
+  adminEmail, adminName, orgName, orgCode,
+  loginUrl, portals, password,
+}) => {
+  if (!adminEmail) return;
+  const portalList = portals && portals.length ? portals.join(', ') : 'As configured';
+  const subject = `Welcome to CareOpsX — ${orgName} is live!`;
+  const text = `Hi ${adminName || 'Admin'},
+
+Your organization "${orgName}" has been successfully onboarded on CareOpsX.
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  ORGANISATION DETAILS
+━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  Organization : ${orgName}
+  Org Code     : ${orgCode}
+  Portals      : ${portalList}
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  YOUR LOGIN DETAILS
+━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  Login URL : ${loginUrl}
+  Email     : ${adminEmail}
+  Password  : ${password || '(as set by super admin)'}
+
+Please change your password after the first login.
+
+If you have any questions, please contact your account manager.
+
+CareOpsX Platform
+Powered by Scube Solutions
+`;
+  await sendEmail(adminEmail, subject, text);
+};
+
 module.exports = {
   notifyBookingConfirmed,
   notifyBookingCancelled,
   notifyAppointmentReminder,
   sendPasswordResetEmail,
+  notifyOrgOnboarded,
 };

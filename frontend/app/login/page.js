@@ -1,5 +1,6 @@
 'use client';
 import { useState } from 'react';
+import Link from 'next/link';
 import { api }      from '@/lib/api';
 
 export default function LoginPage() {
@@ -34,6 +35,7 @@ export default function LoginPage() {
         6: '/lab/dashboard',
         7: '/pharmacy/dashboard',
         8: '/admin/analytics',
+        9: '/cxadmin/organizations',
       };
       window.location.href = routes[data.user.role_id] || '/login';
 
@@ -46,7 +48,7 @@ export default function LoginPage() {
 
   return (
     <div style={{ ...styles.wrapper, position: 'relative' }}>
-      <a href="/" style={{ position: 'absolute', top: 24, left: 28, display: 'flex', alignItems: 'center', gap: 10, textDecoration: 'none' }}>
+      <Link href="/" style={{ position: 'absolute', top: 24, left: 28, display: 'flex', alignItems: 'center', gap: 10, textDecoration: 'none' }}>
         <div style={{ width: 38, height: 38, background: 'linear-gradient(135deg, #1e3f85 0%, #13cfbd 100%)', borderRadius: 10, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
           <svg viewBox="0 0 24 24" fill="none" width="18" height="18">
             <rect x="10.5" y="4" width="3" height="16" rx="1.5" fill="white"/>
@@ -59,7 +61,7 @@ export default function LoginPage() {
           </div>
           <div style={{ fontSize: '.65rem', color: '#64748b', letterSpacing: '.07em', textTransform: 'uppercase' }}>Healthcare Operations</div>
         </div>
-      </a>
+      </Link>
       <div style={styles.card}>
 
         {/* Logo */}
@@ -114,7 +116,7 @@ export default function LoginPage() {
         </button>
 
         <p style={styles.switch}>
-          Don't have an account?{' '}
+          Don&apos;t have an account?{' '}
           <a href="/register" style={styles.link}>Register free</a>
         </p>
       </div>

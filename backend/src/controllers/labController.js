@@ -1,25 +1,25 @@
-const supabase = require('../utils/supabase');
 const { auditLog } = require('../middlewares/audit');
+const { getUserOrganizationId } = require('../utils/organizationAccess');
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
-const attachLabRelated = async (rows) => {
+const attachLabRelated = async (rows, db) => {
   if (!rows.length) return rows;
 
   const patientIds = [...new Set(rows.map(r => r.patient_id).filter(Boolean))];
   const patientMap = {};
   if (patientIds.length) {
-    const { data: patients } = await supabase.from('patients').select('id, first_name, last_name, patient_uid, phone, date_of_birth, gender, blood_group').in('id', patientIds);
+    const { data: patients } = await db.from('patients').select('id, first_name, last_name, patient_uid, phone, date_of_birth, gender, blood_group').in('id', patientIds);
     (patients || []).forEach(p => { patientMap[p.id] = p; });
   }
 
   const doctorIds = [...new Set(rows.map(r => r.doctor_id).filter(Boolean))];
   const doctorMap = {};
   if (doctorIds.length) {
-    const { data: doctors } = await supabase.from('doctors').select('id, user_id, specialization').in('id', doctorIds);
+    const { data: doctors } = await db.from('doctors').select('id, user_id, specialization').in('id', doctorIds);
     const userIds = [...new Set((doctors || []).map(d => d.user_id).filter(Boolean))];
     const userMap = {};
     if (userIds.length) {
-      const { data: users } = await supabase.from('users').select('id, first_name, last_name').in('id', userIds);
+      const { data: users } = await db.from('users').select('id, first_name, last_name').in('id', userIds);
       (users || []).forEach(u => { userMap[u.id] = u; });
     }
     (doctors || []).forEach(d => { doctorMap[d.id] = { users: userMap[d.user_id] || null }; });
@@ -35,18 +35,21 @@ const attachLabRelated = async (rows) => {
 // ── Get Lab Order Queue ───────────────────────────────────────────────────────
 const getLabOrders = async (req, res) => {
   try {
+    const supabase = req.db;
     const { status, date, patient_id, urgency } = req.query;
     const today = date || new Date().toISOString().split('T')[0];
+    const organizationId = getUserOrganizationId(req);
 
     let query = supabase.from('lab_orders').select('*').order('ordered_at', { ascending: false });
 
-    if (status)     query = query.eq('status', status);
-    if (patient_id) query = query.eq('patient_id', patient_id);
-    if (urgency)    query = query.eq('urgency', urgency);
+    if (organizationId) query = query.eq('organization_id', organizationId);
+    if (status)         query = query.eq('status', status);
+    if (patient_id)     query = query.eq('patient_id', patient_id);
+    if (urgency)        query = query.eq('urgency', urgency);
 
     const { data, error } = await query;
     if (error) throw error;
-    return res.json({ lab_orders: await attachLabRelated(data || []) });
+    return res.json({ lab_orders: await attachLabRelated(data || [], supabase) });
   } catch (err) {
     return res.status(500).json({ error: err.message });
   }
@@ -55,10 +58,14 @@ const getLabOrders = async (req, res) => {
 // ── Get Single Lab Order ──────────────────────────────────────────────────────
 const getLabOrderById = async (req, res) => {
   try {
-    const { data: order, error } = await supabase.from('lab_orders').select('*').eq('id', req.params.id).single();
+    const supabase = req.db;
+    const organizationId = getUserOrganizationId(req);
+    let orderQuery = supabase.from('lab_orders').select('*').eq('id', req.params.id);
+    if (organizationId) orderQuery = orderQuery.eq('organization_id', organizationId);
+    const { data: order, error } = await orderQuery.single();
     if (error || !order) return res.status(404).json({ error: 'Lab order not found' });
 
-    const [enriched] = await attachLabRelated([order]);
+    const [enriched] = await attachLabRelated([order], supabase);
 
     const { data: lab_reports } = await supabase.from('lab_reports').select('*').eq('lab_order_id', req.params.id);
     return res.json({ lab_order: { ...enriched, lab_reports: lab_reports || [] } });
@@ -70,6 +77,7 @@ const getLabOrderById = async (req, res) => {
 // ── Patient: My Lab Orders ────────────────────────────────────────────────────
 const getMyLabOrders = async (req, res) => {
   try {
+    const supabase = req.db;
     const { data: patient } = await supabase.from('patients').select('id').eq('user_id', req.user.id).single();
     if (!patient) return res.json({ lab_orders: [] });
 
@@ -101,6 +109,7 @@ const getMyLabOrders = async (req, res) => {
 // ── Update Lab Order Status ───────────────────────────────────────────────────
 const updateLabOrderStatus = async (req, res) => {
   try {
+    const supabase = req.db;
     const { id } = req.params;
     const { status, sample_collection_notes } = req.body;
     const allowed = ['ordered', 'sample_collected', 'processing', 'ready', 'delivered', 'cancelled'];
@@ -125,9 +134,11 @@ const updateLabOrderStatus = async (req, res) => {
 // ── Upload Lab Report ─────────────────────────────────────────────────────────
 const uploadLabReport = async (req, res) => {
   try {
+    const supabase = req.db;
     const { lab_order_id, patient_id, doctor_id, consultation_id, report_data, report_url, findings, remarks, is_normal } = req.body;
     if (!lab_order_id || !patient_id) return res.status(400).json({ error: 'lab_order_id and patient_id required' });
 
+    const organizationId = getUserOrganizationId(req);
     const { data, error } = await supabase.from('lab_reports').insert([{
       lab_order_id,
       patient_id,
@@ -139,6 +150,7 @@ const uploadLabReport = async (req, res) => {
       remarks: remarks || null,
       is_normal: is_normal !== undefined ? is_normal : null,
       status: 'ready',
+      organization_id: organizationId || null,
       uploaded_by: req.user.id,
       uploaded_at: new Date().toISOString(),
       created_at: new Date().toISOString()
@@ -159,6 +171,7 @@ const uploadLabReport = async (req, res) => {
 // ── Upload File to Supabase Storage ──────────────────────────────────────────
 const uploadLabFile = async (req, res) => {
   try {
+    const supabase = req.db;
     const { base64, filename, content_type } = req.body;
     if (!base64 || !filename) return res.status(400).json({ error: 'base64 and filename required' });
 
@@ -185,11 +198,14 @@ const uploadLabFile = async (req, res) => {
 // ── Get All Lab Reports ───────────────────────────────────────────────────────
 const getLabReports = async (req, res) => {
   try {
+    const supabase = req.db;
     const { patient_id, lab_order_id } = req.query;
+    const organizationId = getUserOrganizationId(req);
 
     let query = supabase.from('lab_reports').select('*, lab_orders(test_name, test_code)').order('uploaded_at', { ascending: false });
-    if (patient_id)   query = query.eq('patient_id', patient_id);
-    if (lab_order_id) query = query.eq('lab_order_id', lab_order_id);
+    if (organizationId) query = query.eq('organization_id', organizationId);
+    if (patient_id)     query = query.eq('patient_id', patient_id);
+    if (lab_order_id)   query = query.eq('lab_order_id', lab_order_id);
 
     const { data, error } = await query;
     if (error) throw error;
@@ -233,6 +249,7 @@ const getLabReports = async (req, res) => {
 // ── Correct Lab Report ────────────────────────────────────────────────────────
 const correctLabReport = async (req, res) => {
   try {
+    const supabase = req.db;
     const { id } = req.params;
     const { data: old } = await supabase.from('lab_reports').select('*').eq('id', id).single();
     const { data, error } = await supabase.from('lab_reports').update({ ...req.body, status: 'corrected', corrected_by: req.user.id, corrected_at: new Date().toISOString() }).eq('id', id).select('*').single();
@@ -247,6 +264,7 @@ const correctLabReport = async (req, res) => {
 // ── Mark Report Delivered ─────────────────────────────────────────────────────
 const markReportDelivered = async (req, res) => {
   try {
+    const supabase = req.db;
     const { id } = req.params;
     const { data, error } = await supabase.from('lab_reports').update({ status: 'delivered', delivered_at: new Date().toISOString(), delivered_by: req.user.id }).eq('id', id).select('*').single();
     if (error) throw error;
@@ -261,10 +279,11 @@ const markReportDelivered = async (req, res) => {
 // ── Test Catalog (role-aware — doctors don't see fees) ────────────────────────
 const getTestCatalog = async (req, res) => {
   try {
-    const { data, error } = await supabase.from('lab_test_catalog')
-      .select('id, test_name, test_code, category, fee')
-      .eq('is_active', true)
-      .order('test_name', { ascending: true });
+    const supabase = req.db;
+    const organizationId = getUserOrganizationId(req);
+    let catalogQuery = supabase.from('lab_test_catalog').select('id, test_name, test_code, category, fee').eq('is_active', true).order('test_name', { ascending: true });
+    if (organizationId) catalogQuery = catalogQuery.eq('organization_id', organizationId);
+    const { data, error } = await catalogQuery;
     if (error) throw error;
     const showFee = ![2, 3].includes(req.user?.role_id); // hide from doctors & patients
     return res.json({
@@ -278,6 +297,7 @@ const getTestCatalog = async (req, res) => {
 // ── Update Payment Status on Lab Order ───────────────────────────────────────
 const updateLabOrderPayment = async (req, res) => {
   try {
+    const supabase = req.db;
     const { id } = req.params;
     const { payment_status, payment_source, payment_amount } = req.body;
     const { data, error } = await supabase.from('lab_orders')

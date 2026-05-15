@@ -1,14 +1,14 @@
-const supabase = require('../utils/supabase');
 const { auditLog } = require('../middlewares/audit');
+const { getUserOrganizationId } = require('../utils/organizationAccess');
 
-const attachDoctorNames = async (rows) => {
+const attachDoctorNames = async (rows, db) => {
   const doctorIds = [...new Set(rows.map(r => r.doctor_id).filter(Boolean))];
   if (!doctorIds.length) return {};
-  const { data: doctors } = await supabase.from('doctors').select('id, user_id').in('id', doctorIds);
+  const { data: doctors } = await db.from('doctors').select('id, user_id').in('id', doctorIds);
   const userIds = [...new Set((doctors || []).map(d => d.user_id).filter(Boolean))];
   const userMap = {};
   if (userIds.length) {
-    const { data: users } = await supabase.from('users').select('id, first_name, last_name').in('id', userIds);
+    const { data: users } = await db.from('users').select('id, first_name, last_name').in('id', userIds);
     (users || []).forEach(u => { userMap[u.id] = u; });
   }
   const nameMap = {};
@@ -19,8 +19,10 @@ const attachDoctorNames = async (rows) => {
 // ── Create Consultation ───────────────────────────────────────────────────────
 const createConsultation = async (req, res) => {
   try {
+    const supabase = req.db;
     const { patient_id, appointment_id, doctor_id, chief_complaint, symptoms, history, diagnosis, notes, advice, follow_up_required, follow_up_date, follow_up_notes } = req.body;
     if (!patient_id || !doctor_id) return res.status(400).json({ error: 'patient_id and doctor_id are required' });
+    const organizationId = getUserOrganizationId(req);
 
     const { data, error } = await supabase.from('consultations').insert([{
       patient_id,
@@ -37,6 +39,7 @@ const createConsultation = async (req, res) => {
       follow_up_notes: follow_up_notes || null,
       consultation_status: 'completed',
       consultation_date: new Date().toISOString().split('T')[0],
+      organization_id: organizationId || null,
       created_by: req.user.id,
       created_at: new Date().toISOString()
     }]).select('*').single();
@@ -58,6 +61,7 @@ const createConsultation = async (req, res) => {
         follow_up_date,
         notes: follow_up_notes || null,
         status: 'scheduled',
+        organization_id: organizationId || null,
         created_by: req.user.id,
         created_at: new Date().toISOString()
       }]);
@@ -73,9 +77,13 @@ const createConsultation = async (req, res) => {
 // ── Update Consultation ───────────────────────────────────────────────────────
 const updateConsultation = async (req, res) => {
   try {
+    const supabase = req.db;
     const { id } = req.params;
+    const organizationId = getUserOrganizationId(req);
     const { data: old } = await supabase.from('consultations').select('*').eq('id', id).single();
-    const { data, error } = await supabase.from('consultations').update({ ...req.body, updated_by: req.user.id, updated_at: new Date().toISOString() }).eq('id', id).select('*').single();
+    let updateQuery = supabase.from('consultations').update({ ...req.body, updated_by: req.user.id, updated_at: new Date().toISOString() }).eq('id', id);
+    if (organizationId) updateQuery = updateQuery.eq('organization_id', organizationId);
+    const { data, error } = await updateQuery.select('*').single();
     if (error) throw error;
     await auditLog({ user_id: req.user.id, role_id: req.user.role_id, action: 'UPDATE_CONSULTATION', module: 'Consultation', entity_type: 'consultation', entity_id: id, old_data: old, new_data: req.body });
     return res.json({ message: 'Consultation updated', consultation: data });
@@ -87,11 +95,15 @@ const updateConsultation = async (req, res) => {
 // ── Get Consultation ──────────────────────────────────────────────────────────
 const getConsultation = async (req, res) => {
   try {
+    const supabase = req.db;
     const { id } = req.params;
-    const { data, error } = await supabase.from('consultations').select('*').eq('id', id).single();
+    const organizationId = getUserOrganizationId(req);
+    let consultQuery = supabase.from('consultations').select('*').eq('id', id);
+    if (organizationId) consultQuery = consultQuery.eq('organization_id', organizationId);
+    const { data, error } = await consultQuery.single();
     if (error || !data) return res.status(404).json({ error: 'Consultation not found' });
 
-    const nameMap = await attachDoctorNames([data]);
+    const nameMap = await attachDoctorNames([data], supabase);
 
     // Fetch patient separately
     const { data: patient } = data.patient_id
@@ -116,15 +128,20 @@ const getConsultation = async (req, res) => {
 // ── Get Doctor's Today Queue ──────────────────────────────────────────────────
 const getDoctorQueue = async (req, res) => {
   try {
+    const supabase = req.db;
     const doctor_id = req.params.doctor_id || req.user.id;
     const today = new Date().toISOString().split('T')[0];
+    const organizationId = getUserOrganizationId(req);
 
-    const { data, error } = await supabase.from('queue_tokens')
+    let queueQuery = supabase.from('queue_tokens')
       .select('*, appointments(id, booking_id, appointment_type, reason)')
       .eq('doctor_id', doctor_id)
       .eq('token_date', today)
       .order('priority', { ascending: false })
       .order('token_number', { ascending: true });
+
+    if (organizationId) queueQuery = queueQuery.eq('organization_id', organizationId);
+    const { data, error } = await queueQuery;
 
     if (error) throw error;
 
@@ -146,22 +163,19 @@ const getDoctorQueue = async (req, res) => {
 // ── Get Patient Visit History ─────────────────────────────────────────────────
 const getPatientHistory = async (req, res) => {
   try {
+    const supabase = req.db;
     const { patient_id } = req.params;
+    const organizationId = getUserOrganizationId(req);
 
-    const [{ data, error }, { data: labOrders }] = await Promise.all([
-      supabase.from('consultations')
-        .select('*, prescriptions(id, prescription_items(medicine_name, dosage, duration)), lab_orders(id, test_name, status)')
-        .eq('patient_id', patient_id)
-        .order('created_at', { ascending: false }),
-      supabase.from('lab_orders')
-        .select('*, lab_reports(*)')
-        .eq('patient_id', patient_id)
-        .order('ordered_at', { ascending: false }),
-    ]);
+    let consultQ = supabase.from('consultations').select('*, prescriptions(id, prescription_items(medicine_name, dosage, duration)), lab_orders(id, test_name, status)').eq('patient_id', patient_id).order('created_at', { ascending: false });
+    let labQ     = supabase.from('lab_orders').select('*, lab_reports(*)').eq('patient_id', patient_id).order('ordered_at', { ascending: false });
+    if (organizationId) { consultQ = consultQ.eq('organization_id', organizationId); labQ = labQ.eq('organization_id', organizationId); }
+
+    const [{ data, error }, { data: labOrders }] = await Promise.all([consultQ, labQ]);
 
     if (error) throw error;
 
-    const nameMap = await attachDoctorNames(data || []);
+    const nameMap = await attachDoctorNames(data || [], supabase);
     const history = (data || []).map(c => ({ ...c, doctors: nameMap[c.doctor_id] || null }));
     return res.json({ history, lab_orders: labOrders || [] });
   } catch (err) {
@@ -172,15 +186,18 @@ const getPatientHistory = async (req, res) => {
 // ── Create Prescription ───────────────────────────────────────────────────────
 const createPrescription = async (req, res) => {
   try {
+    const supabase = req.db;
     const { patient_id, consultation_id, appointment_id, doctor_id, items, notes } = req.body;
     if (!patient_id || !doctor_id || !items?.length) return res.status(400).json({ error: 'patient_id, doctor_id, and items are required' });
 
+    const organizationId = getUserOrganizationId(req);
     const { data: pres, error: presError } = await supabase.from('prescriptions').insert([{
       patient_id,
       consultation_id: consultation_id || null,
       appointment_id: appointment_id || null,
       doctor_id,
       notes: notes || null,
+      organization_id: organizationId || null,
       created_by: req.user.id,
       created_at: new Date().toISOString()
     }]).select('*').single();
@@ -210,9 +227,11 @@ const createPrescription = async (req, res) => {
 // ── Create Lab Order ──────────────────────────────────────────────────────────
 const createLabOrder = async (req, res) => {
   try {
+    const supabase = req.db;
     const { patient_id, consultation_id, appointment_id, doctor_id, tests, urgency, notes } = req.body;
     if (!patient_id || !doctor_id || !tests?.length) return res.status(400).json({ error: 'patient_id, doctor_id, and tests required' });
 
+    const organizationId = getUserOrganizationId(req);
     const labOrderRows = tests.map(test => ({
       patient_id,
       consultation_id: consultation_id || null,
@@ -223,6 +242,7 @@ const createLabOrder = async (req, res) => {
       urgency: urgency || 'normal',
       notes: notes || null,
       status: 'ordered',
+      organization_id: organizationId || null,
       ordered_at: new Date().toISOString(),
       created_by: req.user.id
     }));
@@ -240,6 +260,7 @@ const createLabOrder = async (req, res) => {
 // ── Patient: My Prescriptions ─────────────────────────────────────────────────
 const getMyPrescriptions = async (req, res) => {
   try {
+    const supabase = req.db;
     const { data: patient } = await supabase.from('patients').select('id').eq('user_id', req.user.id).single();
     if (!patient) return res.json({ prescriptions: [] });
 

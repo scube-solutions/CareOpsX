@@ -1,117 +1,8 @@
-// 'use client';
-
-// import { useEffect, useState } from 'react';
-// import { usePathname } from 'next/navigation';
-// import { getUser, logout } from '@/lib/auth';
-
-// export const T = {
-//   teal: '#00b4a0',
-//   navy: '#0f1f3d',
-//   bg: '#f5f8fc',
-//   card: '#ffffff',
-//   border: '#e2e8f0',
-//   text: '#1e293b',
-//   muted: '#64748b',
-//   display: "'Bricolage Grotesque', sans-serif",
-//   body: "'Instrument Sans', sans-serif",
-// };
-
-// const NAV_ITEMS = [
-//   { label: 'Dashboard', href: '/admin/dashboard', icon: '?' },
-//   { label: 'Appointments', href: '/admin/appointments', icon: '?' },
-//   { label: 'Patients', href: '/admin/patients', icon: '?' },
-//   { label: 'Doctors', href: '/admin/doctors', icon: '?' },
-//   { label: 'Staff', href: '/admin/staff', icon: '?' },
-//   { label: 'Billing', href: '/admin/billing', icon: '?' },
-// ];
-
-// export default function AdminLayout({ children }) {
-//   const pathname = usePathname();
-//   const [collapsed, setCollapsed] = useState(false);
-//   const [ready, setReady] = useState(false);
-
-//   useEffect(() => {
-//     const user = getUser();
-//     if (!user || user.role_id !== 1) {
-//       window.location.href = '/login';
-//       return;
-//     }
-//     setReady(true);
-//   }, []);
-
-//   if (!ready) {
-//     return (
-//       <div style={{ minHeight: '100vh', background: T.bg, display: 'grid', placeItems: 'center', color: T.muted, fontFamily: T.body }}>
-//         Loading admin workspace...
-//       </div>
-//     );
-//   }
-
-//   const sidebarWidth = collapsed ? 76 : 248;
-
-//   return (
-//     <div style={{ minHeight: '100vh', background: T.bg, display: 'flex', fontFamily: T.body }}>
-//       <aside style={{ width: sidebarWidth, background: T.navy, color: '#fff', transition: 'width .2s ease', minHeight: '100vh', borderRight: '1px solid rgba(255,255,255,.08)', position: 'sticky', top: 0, alignSelf: 'flex-start' }}>
-//         <div style={{ padding: '18px 14px', borderBottom: '1px solid rgba(255,255,255,.08)', display: 'flex', alignItems: 'center', gap: 10 }}>
-//           <button onClick={() => setCollapsed((v) => !v)} style={{ width: 30, height: 30, borderRadius: 8, border: 'none', background: 'rgba(255,255,255,.12)', color: '#fff', cursor: 'pointer' }}>
-//             {collapsed ? '?' : '?'}
-//           </button>
-//           {!collapsed && (
-//             <div>
-//               <div style={{ fontFamily: T.display, fontWeight: 700, fontSize: 16 }}>CareOpsX</div>
-//               <div style={{ fontSize: 11, color: 'rgba(255,255,255,.6)' }}>Admin Console</div>
-//             </div>
-//           )}
-//         </div>
-
-//         <nav style={{ padding: '12px 8px' }}>
-//           {NAV_ITEMS.map((item) => {
-//             const active = pathname === item.href;
-//             return (
-//               <a
-//                 key={item.href}
-//                 href={item.href}
-//                 title={collapsed ? item.label : ''}
-//                 style={{
-//                   display: 'flex',
-//                   alignItems: 'center',
-//                   gap: 10,
-//                   justifyContent: collapsed ? 'center' : 'flex-start',
-//                   textDecoration: 'none',
-//                   padding: collapsed ? '11px 0' : '11px 12px',
-//                   borderRadius: 10,
-//                   marginBottom: 4,
-//                   fontSize: 14,
-//                   color: active ? T.teal : 'rgba(255,255,255,.72)',
-//                   background: active ? 'rgba(0,180,160,.14)' : 'transparent',
-//                   fontWeight: active ? 700 : 500,
-//                 }}
-//               >
-//                 <span style={{ width: 18, textAlign: 'center' }}>{item.icon}</span>
-//                 {!collapsed && item.label}
-//               </a>
-//             );
-//           })}
-//         </nav>
-
-//         <div style={{ marginTop: 'auto', padding: 12, borderTop: '1px solid rgba(255,255,255,.08)' }}>
-//           <button onClick={logout} style={{ width: '100%', border: '1px solid rgba(255,255,255,.2)', background: 'transparent', color: 'rgba(255,255,255,.85)', padding: '9px 10px', borderRadius: 8, cursor: 'pointer', fontSize: 13 }}>
-//             {collapsed ? '?' : 'Sign Out'}
-//           </button>
-//         </div>
-//       </aside>
-
-//       <main style={{ flex: 1, minWidth: 0 }}>{children}</main>
-//     </div>
-//   );
-// }
-
-
 'use client';
-import { useState, useEffect } from 'react';
-import { useRouter, usePathname } from 'next/navigation';
-import { getUser, clearAuth } from '@/lib/auth';
-import RoleSwitcher from '@/lib/RoleSwitcher';
+import { useEffect, useState } from 'react';
+import { useRouter } from 'next/navigation';
+import { getUser } from '@/lib/auth';
+import AppShell from '@/lib/AppShell';
 
 export const T = {
   teal:    '#00b4a0',
@@ -218,131 +109,29 @@ const NAV_GROUPS = [
   },
 ];
 
-function AdminSidebar({ collapsed, onToggle, user }) {
-  const pathname  = usePathname();
-  const initials  = user?.name ? user.name.split(' ').map(w=>w[0]).join('').slice(0,2).toUpperCase() : 'A';
-
-  return (
-    <aside style={{
-      width: collapsed ? 68 : 240,
-      minHeight: '100vh', background: T.navy,
-      display: 'flex', flexDirection: 'column',
-      transition: 'width .22s ease', overflow: 'hidden',
-      flexShrink: 0, position: 'sticky', top: 0,
-      alignSelf: 'flex-start', height: '100vh',
-    }}>
-      {/* Logo row */}
-      <div onClick={onToggle} style={{
-        padding: '18px 14px 16px', borderBottom: '1px solid rgba(255,255,255,.08)',
-        display: 'flex', alignItems: 'center', gap: 10,
-        cursor: 'pointer', userSelect: 'none', minHeight: 64,
-      }}>
-        <div style={{ flexShrink: 0 }}><Icons.Logo /></div>
-        {!collapsed && (
-          <div>
-            <div style={{ fontFamily: T.display, fontWeight: 700, color: '#fff', fontSize: 15, letterSpacing: '.3px' }}>
-              Care<span style={{ color: T.teal }}>OpsX</span>
-            </div>
-            <div style={{ fontSize: 10, color: 'rgba(255,255,255,.3)', marginTop: 1, letterSpacing: '.06em', textTransform: 'uppercase' }}>Healthcare Operations</div>
-          </div>
-        )}
-      </div>
-
-      {/* Nav */}
-      <nav style={{ flex: 1, padding: '10px 8px', overflowY: 'auto', overflowX: 'hidden' }}>
-        {NAV_GROUPS.map(group => (
-          <div key={group.label} style={{ marginBottom: 6 }}>
-            {!collapsed && (
-              <div style={{ fontSize: 10, color: 'rgba(255,255,255,.25)', fontWeight: 700,
-                letterSpacing: '.1em', textTransform: 'uppercase', padding: '8px 10px 5px' }}>
-                {group.label}
-              </div>
-            )}
-            {group.items.map(item => {
-              const isActive = pathname === item.href || pathname.startsWith(item.href + '/');
-              return (
-                <a key={item.href} href={item.href} style={{
-                  display: 'flex', alignItems: 'center', gap: 10,
-                  padding: collapsed ? '11px 0' : '9px 12px',
-                  justifyContent: collapsed ? 'center' : 'flex-start',
-                  borderRadius: 8,
-                  background: isActive ? 'rgba(0,180,160,.18)' : 'transparent',
-                  color: isActive ? T.teal : 'rgba(255,255,255,.5)',
-                  fontFamily: T.body, fontSize: 14,
-                  fontWeight: isActive ? 600 : 400,
-                  marginBottom: 2, textDecoration: 'none',
-                  transition: 'all .12s',
-                  borderLeft: isActive ? `3px solid ${T.teal}` : '3px solid transparent',
-                }}>
-                  <item.Icon />
-                  {!collapsed && item.label}
-                </a>
-              );
-            })}
-          </div>
-        ))}
-      </nav>
-
-      {/* User footer */}
-      <div style={{ padding: collapsed ? '12px 8px' : '12px 16px', borderTop: '1px solid rgba(255,255,255,.08)' }}>
-        {collapsed ? (
-          <div style={{ width: 36, height: 36, borderRadius: '50%', background: T.teal,
-            display: 'flex', alignItems: 'center', justifyContent: 'center',
-            fontSize: 13, fontWeight: 700, color: '#fff', margin: '0 auto' }}>
-            {initials}
-          </div>
-        ) : (
-          <>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 10 }}>
-              <div style={{ width: 34, height: 34, borderRadius: '50%', background: T.teal,
-                display: 'flex', alignItems: 'center', justifyContent: 'center',
-                fontSize: 12, fontWeight: 700, color: '#fff', flexShrink: 0 }}>
-                {initials}
-              </div>
-              <div style={{ overflow: 'hidden' }}>
-                <div style={{ fontSize: 13, fontWeight: 600, color: '#fff', whiteSpace: 'nowrap',
-                  overflow: 'hidden', textOverflow: 'ellipsis' }}>{user?.name || 'Admin'}</div>
-                <div style={{ fontSize: 11, color: 'rgba(255,255,255,.3)' }}>Administrator</div>
-              </div>
-            </div>
-            <RoleSwitcher currentRole={1} />
-            <button onClick={() => { clearAuth(); window.location.href = '/login'; }}
-              style={{ width: '100%', padding: '8px', borderRadius: 7,
-                border: '1px solid rgba(255,255,255,.12)', background: 'transparent',
-                color: 'rgba(255,255,255,.45)', fontFamily: T.body, fontSize: 12,
-                cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6 }}>
-              <Icons.Logout /> Sign Out
-            </button>
-          </>
-        )}
-      </div>
-    </aside>
-  );
-}
-
 export default function AdminLayout({ children }) {
-  const router    = useRouter();
-  const [user, setUser]           = useState(null);
-  const [collapsed, setCollapsed] = useState(true);
-  const [ready, setReady]         = useState(false);
+  const router = useRouter();
+  const [ready, setReady] = useState(false);
+  const [user, setUser] = useState(null);
 
   useEffect(() => {
     const u = getUser();
-    if (!u) { router.push('/login'); return; }
-    const roles = Array.isArray(u.roles) && u.roles.length ? u.roles : [u.role_id];
-    if (!roles.includes(1)) { router.push('/login'); return; }
-    setUser(u);
-    setReady(true);
-  }, []);
+    const roles = Array.isArray(u?.roles) && u.roles.length ? u.roles : [u?.role_id];
+    if (!u || !roles.includes(1)) {
+      router.push('/login');
+    } else {
+      setUser(u);
+      setReady(true);
+    }
+  }, [router]);
 
   if (!ready) return null;
 
+  const orgLabel = user?.organization_name || 'Administrator';
+
   return (
-    <div style={{ display: 'flex', minHeight: '100vh', background: T.bg, fontFamily: T.body }}>
-      <AdminSidebar collapsed={collapsed} onToggle={() => setCollapsed(c => !c)} user={user} />
-      <main style={{ flex: 1, overflow: 'auto', minWidth: 0 }}>
-        {children}
-      </main>
-    </div>
+    <AppShell title="Admin Console" roleLabel={orgLabel} currentRole={1} groups={NAV_GROUPS} user={user} collapsibleDesktop defaultCollapsed>
+      {children}
+    </AppShell>
   );
 }

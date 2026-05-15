@@ -1,5 +1,5 @@
-const supabase = require('../utils/supabase');
 const { auditLog } = require('../middlewares/audit');
+const { getUserOrganizationId } = require('../utils/organizationAccess');
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 const generatePatientId = () => {
@@ -11,21 +11,29 @@ const generatePatientId = () => {
 // ── Duplicate Detection ───────────────────────────────────────────────────────
 const checkDuplicates = async (req, res) => {
   try {
+    const supabase = req.db;
     const { phone, email, first_name, last_name, date_of_birth } = req.body;
+    const organizationId = getUserOrganizationId(req);
     const matches = [];
 
+    const base = () => {
+      let q = supabase.from('patients').select('id, patient_uid, first_name, last_name, phone, email, date_of_birth').eq('is_archived', false);
+      if (organizationId) q = q.eq('organization_id', organizationId);
+      return q;
+    };
+
     if (phone) {
-      const { data } = await supabase.from('patients').select('id, patient_uid, first_name, last_name, phone, email, date_of_birth').eq('phone', phone).eq('is_archived', false);
+      const { data } = await base().eq('phone', phone);
       if (data?.length) matches.push(...data.map(d => ({ ...d, match_reason: 'phone' })));
     }
     if (email) {
-      const { data } = await supabase.from('patients').select('id, patient_uid, first_name, last_name, phone, email, date_of_birth').eq('email', email).eq('is_archived', false);
+      const { data } = await base().eq('email', email);
       if (data?.length) {
         data.forEach(d => { if (!matches.find(m => m.id === d.id)) matches.push({ ...d, match_reason: 'email' }); });
       }
     }
     if (first_name && last_name && date_of_birth) {
-      const { data } = await supabase.from('patients').select('id, patient_uid, first_name, last_name, phone, email, date_of_birth').ilike('first_name', first_name).ilike('last_name', last_name).eq('date_of_birth', date_of_birth).eq('is_archived', false);
+      const { data } = await base().ilike('first_name', first_name).ilike('last_name', last_name).eq('date_of_birth', date_of_birth);
       if (data?.length) {
         data.forEach(d => { if (!matches.find(m => m.id === d.id)) matches.push({ ...d, match_reason: 'name+dob' }); });
       }
@@ -40,11 +48,14 @@ const checkDuplicates = async (req, res) => {
 // ── Get Patients ──────────────────────────────────────────────────────────────
 const getPatients = async (req, res) => {
   try {
+    const supabase = req.db;
     const { search, page = 1, limit = 20, chronic_only } = req.query;
     const offset = (parseInt(page) - 1) * parseInt(limit);
+    const organizationId = getUserOrganizationId(req);
 
     let query = supabase.from('patients').select('id, patient_uid, first_name, last_name, gender, date_of_birth, phone, email, blood_group, chronic_disease_tag, is_archived, created_at', { count: 'exact' }).eq('is_archived', false).order('created_at', { ascending: false }).range(offset, offset + parseInt(limit) - 1);
 
+    if (organizationId) query = query.eq('organization_id', organizationId);
     if (search) query = query.or(`phone.ilike.%${search}%,email.ilike.%${search}%,first_name.ilike.%${search}%,last_name.ilike.%${search}%,patient_uid.ilike.%${search}%`);
     if (chronic_only === 'true') query = query.not('chronic_disease_tag', 'is', null);
 
@@ -59,8 +70,12 @@ const getPatients = async (req, res) => {
 // ── Get Patient By ID ─────────────────────────────────────────────────────────
 const getPatientById = async (req, res) => {
   try {
+    const supabase = req.db;
     const { id } = req.params;
-    const { data: patient, error } = await supabase.from('patients').select('*').eq('id', id).single();
+    const organizationId = getUserOrganizationId(req);
+    let patQuery = supabase.from('patients').select('*').eq('id', id);
+    if (organizationId) patQuery = patQuery.eq('organization_id', organizationId);
+    const { data: patient, error } = await patQuery.single();
     if (error || !patient) return res.status(404).json({ error: 'Patient not found' });
 
     const [appts, consultations, labOrders, prescriptions, invoices, followups] = await Promise.all([
@@ -89,13 +104,16 @@ const getPatientById = async (req, res) => {
 // ── Create Patient ────────────────────────────────────────────────────────────
 const createPatient = async (req, res) => {
   try {
+    const supabase = req.db;
     const { first_name, last_name, phone, gender, date_of_birth } = req.body;
     if (!first_name || !phone) return res.status(400).json({ error: 'first_name and phone are required' });
+    const organizationId = getUserOrganizationId(req);
 
     const patient_uid = generatePatientId();
     const { data, error } = await supabase.from('patients').insert([{
       ...req.body,
       patient_uid,
+      organization_id: organizationId || null,
       is_archived: false,
       created_by: req.user.id,
       created_at: new Date().toISOString()
@@ -112,10 +130,14 @@ const createPatient = async (req, res) => {
 // ── Update Patient ────────────────────────────────────────────────────────────
 const updatePatient = async (req, res) => {
   try {
+    const supabase = req.db;
     const { id } = req.params;
+    const organizationId = getUserOrganizationId(req);
     const { data: old } = await supabase.from('patients').select('*').eq('id', id).single();
 
-    const { data, error } = await supabase.from('patients').update({ ...req.body, updated_by: req.user.id, updated_at: new Date().toISOString() }).eq('id', id).select('*').single();
+    let updateQuery = supabase.from('patients').update({ ...req.body, updated_by: req.user.id, updated_at: new Date().toISOString() }).eq('id', id);
+    if (organizationId) updateQuery = updateQuery.eq('organization_id', organizationId);
+    const { data, error } = await updateQuery.select('*').single();
     if (error) throw error;
     await auditLog({ user_id: req.user.id, role_id: req.user.role_id, action: 'UPDATE_PATIENT', module: 'Patient', entity_type: 'patient', entity_id: id, old_data: old, new_data: req.body });
     return res.json({ message: 'Patient updated', patient: data });
@@ -127,8 +149,12 @@ const updatePatient = async (req, res) => {
 // ── Archive Patient ───────────────────────────────────────────────────────────
 const archivePatient = async (req, res) => {
   try {
+    const supabase = req.db;
     const { id } = req.params;
-    const { data, error } = await supabase.from('patients').update({ is_archived: true, updated_by: req.user.id, updated_at: new Date().toISOString() }).eq('id', id).select('id, patient_uid, is_archived').single();
+    const organizationId = getUserOrganizationId(req);
+    let archiveQuery = supabase.from('patients').update({ is_archived: true, updated_by: req.user.id, updated_at: new Date().toISOString() }).eq('id', id);
+    if (organizationId) archiveQuery = archiveQuery.eq('organization_id', organizationId);
+    const { data, error } = await archiveQuery.select('id, patient_uid, is_archived').single();
     if (error) throw error;
     await auditLog({ user_id: req.user.id, role_id: req.user.role_id, action: 'ARCHIVE_PATIENT', module: 'Patient', entity_type: 'patient', entity_id: id });
     return res.json({ message: 'Patient archived', patient: data });
@@ -140,6 +166,7 @@ const archivePatient = async (req, res) => {
 // ── Merge Patients (Admin only) ───────────────────────────────────────────────
 const mergePatients = async (req, res) => {
   try {
+    const supabase = req.db;
     const { primary_patient_id, duplicate_patient_id } = req.body;
     if (!primary_patient_id || !duplicate_patient_id) return res.status(400).json({ error: 'primary_patient_id and duplicate_patient_id required' });
 
@@ -162,7 +189,11 @@ const mergePatients = async (req, res) => {
 // ── Delete Patient ────────────────────────────────────────────────────────────
 const deletePatient = async (req, res) => {
   try {
-    const { error } = await supabase.from('patients').update({ is_archived: true, updated_by: req.user.id }).eq('id', req.params.id);
+    const supabase = req.db;
+    const organizationId = getUserOrganizationId(req);
+    let deleteQuery = supabase.from('patients').update({ is_archived: true, updated_by: req.user.id }).eq('id', req.params.id);
+    if (organizationId) deleteQuery = deleteQuery.eq('organization_id', organizationId);
+    const { error } = await deleteQuery;
     if (error) throw error;
     await auditLog({ user_id: req.user.id, role_id: req.user.role_id, action: 'DELETE_PATIENT', module: 'Patient', entity_type: 'patient', entity_id: req.params.id });
     return res.json({ message: 'Patient archived/deleted' });
@@ -174,6 +205,7 @@ const deletePatient = async (req, res) => {
 // ── Patient: get own profile ──────────────────────────────────────────────────
 const getMyProfile = async (req, res) => {
   try {
+    const supabase = req.db;
     const { data: patient, error } = await supabase.from('patients').select('*').eq('user_id', req.user.id).single();
     if (error || !patient) return res.status(404).json({ error: 'Patient profile not found' });
     const { data: user } = await supabase.from('users').select('first_name, last_name, email').eq('id', req.user.id).single();
@@ -186,6 +218,7 @@ const getMyProfile = async (req, res) => {
 // ── Patient: update own profile ───────────────────────────────────────────────
 const updateMyProfile = async (req, res) => {
   try {
+    const supabase = req.db;
     const { first_name, last_name, phone, date_of_birth, gender, address, blood_group, emergency_contact_name, emergency_contact_phone } = req.body;
     const { data: patient } = await supabase.from('patients').select('id').eq('user_id', req.user.id).single();
     if (!patient) return res.status(404).json({ error: 'Patient profile not found' });

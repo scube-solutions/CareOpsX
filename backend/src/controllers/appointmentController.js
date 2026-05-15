@@ -1,6 +1,6 @@
 const crypto   = require('crypto');
-const supabase  = require('../utils/supabase');
 const { notifyBookingConfirmed, notifyBookingCancelled } = require('../utils/notify');
+const { getUserOrganizationId } = require('../utils/organizationAccess');
 
 const toDbDateTime = (date, time) => {
   if (!date || !time) return null;
@@ -31,6 +31,7 @@ const generateBookingId = () => {
 ───────────────────────────────────────── */
 const setAvailability = async (req, res) => {
   try {
+    const supabase = req.db;
     const { id } = req.params;
     const { working_days, start_time, end_time, slot_duration } = req.body;
 
@@ -70,6 +71,7 @@ const setAvailability = async (req, res) => {
 ───────────────────────────────────────── */
 const getAvailability = async (req, res) => {
   try {
+    const supabase = req.db;
     const { id } = req.params;
 
     const { data, error } = await supabase
@@ -94,6 +96,7 @@ const getAvailability = async (req, res) => {
 ───────────────────────────────────────── */
 const getSlots = async (req, res) => {
   try {
+    const supabase = req.db;
     const { doctor_id, date } = req.query;
 
     if (!doctor_id || !date) {
@@ -169,7 +172,9 @@ const getSlots = async (req, res) => {
 ───────────────────────────────────────── */
 const bookAppointment = async (req, res) => {
   try {
+    const supabase = req.db;
     let { patient_id, doctor_id, appointment_date, appointment_time, reason } = req.body;
+    const organizationId = getUserOrganizationId(req);
 
     if (!patient_id || !doctor_id || !appointment_date || !appointment_time) {
       return res.status(400).json({ error: 'patient_id, doctor_id, appointment_date and appointment_time are required' });
@@ -233,6 +238,7 @@ const bookAppointment = async (req, res) => {
         booking_id,
         token_number,
         status       : 'booked',
+        organization_id: organizationId || null,
         created_at   : new Date().toISOString()
       }])
       .select()
@@ -291,9 +297,11 @@ const bookAppointment = async (req, res) => {
 ───────────────────────────────────────── */
 const getAppointments = async (req, res) => {
   try {
+    const supabase = req.db;
     const { date, doctor_id, status, date_from, date_to } = req.query;
     const limit  = Math.min(Number(req.query.limit)  || 50, 200);
     const offset = Number(req.query.offset) || 0;
+    const organizationId = getUserOrganizationId(req);
 
     const userRoles = Array.isArray(req.user.roles) && req.user.roles.length
       ? req.user.roles : [req.user.role_id];
@@ -307,6 +315,8 @@ const getAppointments = async (req, res) => {
       .order('appointment_date', { ascending: true })
       .order('appointment_time', { ascending: true })
       .range(offset, offset + limit - 1);
+
+    if (organizationId) query = query.eq('organization_id', organizationId);
 
     if (isPatient) {
       const { data: patRec, error: patErr } = await supabase
@@ -377,19 +387,19 @@ const getAppointments = async (req, res) => {
 ───────────────────────────────────────── */
 const updateStatus = async (req, res) => {
   try {
+    const supabase = req.db;
     const { id }     = req.params;
     const { status } = req.body;
+    const organizationId = getUserOrganizationId(req);
 
     const allowed = ['booked', 'confirmed', 'completed', 'cancelled', 'no_show'];
     if (!allowed.includes(status)) {
       return res.status(400).json({ error: `Status must be one of: ${allowed.join(', ')}` });
     }
 
-    const { data: existingAppt, error: existingErr } = await supabase
-      .from('appointments')
-      .select('id, status, booking_id, appointment_date, appointment_time')
-      .eq('id', id)
-      .single();
+    let existingQuery = supabase.from('appointments').select('id, status, booking_id, appointment_date, appointment_time').eq('id', id);
+    if (organizationId) existingQuery = existingQuery.eq('organization_id', organizationId);
+    const { data: existingAppt, error: existingErr } = await existingQuery.single();
 
     if (existingErr || !existingAppt) {
       return res.status(404).json({ error: 'Appointment not found' });
@@ -465,6 +475,7 @@ const updateStatus = async (req, res) => {
 ───────────────────────────────────────── */
 const rescheduleAppointment = async (req, res) => {
   try {
+    const supabase = req.db;
     const { id } = req.params;
     const { appointment_date, appointment_time } = req.body;
 
@@ -516,12 +527,12 @@ const rescheduleAppointment = async (req, res) => {
 ───────────────────────────────────────── */
 const getAppointmentById = async (req, res) => {
   try {
+    const supabase = req.db;
     const { id } = req.params;
-    const { data, error } = await supabase
-      .from('appointments')
-      .select('*')
-      .eq('id', id)
-      .single();
+    const organizationId = getUserOrganizationId(req);
+    let apptQuery = supabase.from('appointments').select('*').eq('id', id);
+    if (organizationId) apptQuery = apptQuery.eq('organization_id', organizationId);
+    const { data, error } = await apptQuery.single();
 
     if (error || !data) return res.status(404).json({ error: 'Appointment not found' });
 

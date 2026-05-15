@@ -75,7 +75,7 @@ export default function AnalyticsDashboard() {
       {loading ? <div style={s.center}>Loading analytics...</div> : (
         <>
           {/* KPI Cards */}
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 14, marginBottom: 24 }}>
+          <div className="responsive-grid-4" style={{ marginBottom: 24 }}>
             {kpiCards.map(c => (
               <div key={c.label} style={{ ...s.card, borderTop: `4px solid ${c.color}` }}>
                 <div style={{ fontSize: '1.8rem', fontWeight: 700, color: c.color }}>{c.value}</div>
@@ -85,7 +85,7 @@ export default function AnalyticsDashboard() {
           </div>
 
           {/* Appointment Breakdown */}
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16, marginBottom: 16 }}>
+          <div className="responsive-grid-2" style={{ gap: 16, marginBottom: 16 }}>
             <div style={s.card}>
               <h2 style={s.h2}>Appointment Breakdown</h2>
               {Object.entries(apptBreakdown).map(([status, count]) => (
@@ -138,7 +138,7 @@ export default function AnalyticsDashboard() {
           </div>
 
           {/* Revenue by Type */}
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16 }}>
+          <div className="responsive-grid-2" style={{ gap: 16 }}>
             <div style={s.card}>
               <h2 style={s.h2}>Revenue by Type</h2>
               {revenue.length === 0 ? <p style={s.empty}>No data</p> : revenue.map(r => (

@@ -1,4 +1,3 @@
-const supabase = require('../utils/supabase');
 
 // Full ordered cascade delete — keeps FK intact, deletes deps first
 const hardDeleteDoctor = async (sb, doctorId) => {
@@ -100,10 +99,10 @@ const hardDeleteDoctor = async (sb, doctorId) => {
   if (error) throw error;
 };
 
-const attachUsers = async (doctors) => {
+const attachUsers = async (doctors, db) => {
   if (!doctors.length) return doctors;
   const userIds = [...new Set(doctors.map(d => d.user_id).filter(Boolean))];
-  const { data: users } = await supabase.from('users').select('id, first_name, last_name, email, phone').in('id', userIds);
+  const { data: users } = await db.from('users').select('id, first_name, last_name, email, phone').in('id', userIds);
   const userMap = {};
   (users || []).forEach(u => { userMap[u.id] = u; });
   return doctors.map(d => ({ ...d, users: userMap[d.user_id] || null }));
@@ -112,12 +111,13 @@ const attachUsers = async (doctors) => {
 // GET /doctors
 const getDoctors = async (req, res) => {
   try {
+    const supabase = req.db;
     const { specialty } = req.query;
     let query = supabase.from('doctors').select('id, user_id, specialization, consultation_fee, experience_years, is_active');
     if (specialty) query = query.ilike('specialization', `%${specialty}%`);
     const { data, error } = await query;
     if (error) throw error;
-    const doctors = await attachUsers(data || []);
+    const doctors = await attachUsers(data || [], supabase);
     return res.status(200).json({ doctors });
   } catch (err) {
     console.error('getDoctors error:', err.message);
@@ -128,9 +128,10 @@ const getDoctors = async (req, res) => {
 // GET /doctors/:id
 const getDoctorById = async (req, res) => {
   try {
+    const supabase = req.db;
     const { data, error } = await supabase.from('doctors').select('id, user_id, specialization, consultation_fee, experience_years, is_active').eq('id', req.params.id).single();
     if (error || !data) return res.status(404).json({ error: 'Doctor not found' });
-    const [doctor] = await attachUsers([data]);
+    const [doctor] = await attachUsers([data], supabase);
     return res.status(200).json({ doctor });
   } catch (err) {
     console.error('getDoctorById error:', err.message);
@@ -141,6 +142,7 @@ const getDoctorById = async (req, res) => {
 // POST /doctors
 const createDoctor = async (req, res) => {
   try {
+    const supabase = req.db;
     const { user_id, specialization, consultation_fee, experience } = req.body;
     if (!user_id || !specialization || consultation_fee === undefined) {
       return res.status(400).json({ error: 'user_id, specialization, and consultation_fee are required' });
@@ -151,7 +153,7 @@ const createDoctor = async (req, res) => {
 
     const { data, error } = await supabase.from('doctors').insert({ user_id, specialization, consultation_fee: Number(consultation_fee), experience_years: experience || null }).select('id, user_id, specialization, consultation_fee, experience_years').single();
     if (error) throw error;
-    const [doctor] = await attachUsers([data]);
+    const [doctor] = await attachUsers([data], supabase);
     return res.status(201).json({ message: 'Doctor created', doctor });
   } catch (err) {
     console.error('createDoctor error:', err.message);
@@ -162,6 +164,7 @@ const createDoctor = async (req, res) => {
 // PUT /doctors/:id
 const updateDoctor = async (req, res) => {
   try {
+    const supabase = req.db;
     const { id } = req.params;
     const { first_name, last_name, email, phone, specialization, consultation_fee, experience_years } = req.body;
 
@@ -192,7 +195,7 @@ const updateDoctor = async (req, res) => {
     const { data: updated, error: getErr } = await supabase
       .from('doctors').select('id, user_id, specialization, consultation_fee, experience_years, is_active').eq('id', id).single();
     if (getErr) throw getErr;
-    const [result] = await attachUsers([updated]);
+    const [result] = await attachUsers([updated], supabase);
     return res.status(200).json({ message: 'Doctor updated', doctor: result });
   } catch (err) {
     console.error('updateDoctor error:', err.message);
@@ -203,6 +206,7 @@ const updateDoctor = async (req, res) => {
 // DELETE /doctors/:id
 const deleteDoctor = async (req, res) => {
   try {
+    const supabase = req.db;
     const id = req.params.id;
     const { data: appts, error: apptErr } = await supabase
       .from('appointments')
@@ -237,6 +241,7 @@ const deleteDoctor = async (req, res) => {
 // GET /doctors/me/schedule?date=YYYY-MM-DD
 const getDoctorSchedule = async (req, res) => {
   try {
+    const supabase = req.db;
     const { date } = req.query;
     if (!date) return res.status(400).json({ error: 'date is required' });
 
@@ -286,6 +291,7 @@ const getDoctorSchedule = async (req, res) => {
 // POST /doctors/me/schedule/block  — body: { date, slot_time, action: 'block'|'unblock' }
 const toggleBlockSlot = async (req, res) => {
   try {
+    const supabase = req.db;
     const { date, slot_time, action } = req.body;
     if (!date || !slot_time || !action) return res.status(400).json({ error: 'date, slot_time, action required' });
 

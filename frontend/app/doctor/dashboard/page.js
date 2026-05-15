@@ -199,12 +199,12 @@ export default function DoctorDashboard() {
 
   return (
     <div style={s.page}>
-      <div style={s.header}>
+      <div className="responsive-header-row" style={s.header}>
         <div>
           <h1 style={s.h1}>Doctor Queue</h1>
           <p style={s.sub}>{new Date().toLocaleDateString('en-IN', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })}</p>
         </div>
-        <div style={{ display: 'flex', gap: 10 }}>
+        <div className="responsive-actions-row" style={{ alignItems: 'center' }}>
           <div style={s.statBadge}><span style={{ fontSize: '1.2rem', fontWeight: 700 }}>{waiting.length}</span><span style={{ fontSize: '.7rem', color: '#64748b' }}>Waiting</span></div>
           <div style={s.statBadge}><span style={{ fontSize: '1.2rem', fontWeight: 700, color: '#10b981' }}>{completed}</span><span style={{ fontSize: '.7rem', color: '#64748b' }}>Done</span></div>
           <button onClick={() => { setShowSchedule(v => !v); if (!schedDate) { const d = schedDays[0]; setSchedDate(d); loadSchedule(d); } }} style={{ ...s.btnSec, borderColor: showSchedule ? '#00b4a0' : undefined, color: showSchedule ? '#00b4a0' : undefined }}>📅 My Schedule</button>
@@ -221,7 +221,7 @@ export default function DoctorDashboard() {
           <p style={{ fontSize: '.8rem', color: '#64748b', marginBottom: 14 }}>Click a slot to block it (patients cannot book). Click blocked slot to re-open. Booked slots cannot be changed.</p>
 
           {/* Day tabs */}
-          <div style={{ display: 'flex', gap: 8, marginBottom: 18 }}>
+          <div className="responsive-actions-row" style={{ marginBottom: 18 }}>
             {schedDays.map((d, i) => {
               const label = i === 0 ? 'Today' : i === 1 ? 'Tomorrow' : new Date(d + 'T00:00:00').toLocaleDateString('en-IN', { weekday: 'short', day: 'numeric', month: 'short' });
               const active = schedDate === d;
@@ -253,7 +253,7 @@ export default function DoctorDashboard() {
                 <strong style={{ color: '#b91c1c' }}>{schedSlots.filter(s => s.status === 'blocked').length}</strong> blocked ·{' '}
                 <strong style={{ color: '#1d4ed8' }}>{schedSlots.filter(s => s.status === 'booked').length}</strong> booked
               </div>
-              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(6, 1fr)', gap: 8 }}>
+              <div className="responsive-schedule-grid">
                 {schedSlots.map(slot => {
                   const cfg = {
                     available: { bg: '#f0fdfb', border: '#00b4a0', color: '#0f766e', cursor: 'pointer' },
@@ -275,9 +275,9 @@ export default function DoctorDashboard() {
         </div>
       )}
 
-      <div style={{ display: 'grid', gridTemplateColumns: '320px 1fr', gap: 20 }}>
+      <div className="responsive-split-320">
         <div style={s.card}>
-          <h2 style={s.h2}>Today's Queue ({queue.length})</h2>
+          <h2 style={s.h2}>Today&apos;s Queue ({queue.length})</h2>
           {queue.length === 0 ? <p style={s.empty}>Queue is empty</p> : (
             <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
               {queue.map(t => (
@@ -611,7 +611,7 @@ export default function DoctorDashboard() {
 }
 
 const s = {
-  page: { padding: '2rem', maxWidth: 1300, margin: '0 auto' },
+  page: { maxWidth: 1300, margin: '0 auto' },
   header: { display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 24 },
   h1: { fontSize: '1.5rem', fontWeight: 700, color: '#0f1f3d', margin: 0 },
   h2: { fontSize: '1rem', fontWeight: 600, color: '#0f1f3d', marginBottom: 12 },

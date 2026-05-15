@@ -10,9 +10,11 @@ const ROLE_META = {
   6: { label: 'Lab Staff',     href: '/lab/dashboard' },
   7: { label: 'Pharmacist',    href: '/pharmacy/dashboard' },
   8: { label: 'Reporting',     href: '/admin/analytics' },
+  9: { label: 'Super Admin',   href: '/cxadmin/organizations' },
 };
 
 export default function RoleSwitcher({ currentRole }) {
+  // Must be client-only — getUser() reads localStorage which doesn't exist on server
   const [others, setOthers] = useState([]);
 
   useEffect(() => {

@@ -34,14 +34,14 @@ export default function PharmacyDashboardPage() {
   if (loading) return <div style={s.center}>Loading…</div>;
 
   return (
-    <div style={s.page}>
+    <div className="responsive-page" style={s.page}>
       <div style={{ marginBottom: 28 }}>
         <h1 style={s.h1}>Pharmacy Dashboard</h1>
         <p style={s.sub}>Inventory overview and recent activity</p>
       </div>
 
       {/* Stats */}
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4,1fr)', gap: 16, marginBottom: 28 }}>
+      <div className="responsive-grid-4" style={{ marginBottom: 28 }}>
         {[
           { label: 'Total Medicines',  value: totalItems,                    color: '#1d4ed8', bg: '#eff6ff' },
           { label: 'Inventory Value',  value: `₹${totalValue.toLocaleString('en-IN', { maximumFractionDigits: 0 })}`, color: '#0f766e', bg: '#f0fdfb' },
@@ -55,7 +55,7 @@ export default function PharmacyDashboardPage() {
         ))}
       </div>
 
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 20 }}>
+      <div className="responsive-grid-2" style={{ gap: 20 }}>
         {/* Low Stock */}
         <div style={s.card}>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
@@ -121,7 +121,8 @@ export default function PharmacyDashboardPage() {
         {invoices.length === 0 ? (
           <div style={s.empty}>No invoices yet</div>
         ) : (
-          <table style={s.table}>
+          <div className="responsive-scroll-x">
+          <table style={{ ...s.table, minWidth: 680 }}>
             <thead>
               <tr style={{ background: '#f8fafc' }}>
                 {['Invoice #', 'Patient', 'Total', 'Status', 'Date'].map(h => (
@@ -149,6 +150,7 @@ export default function PharmacyDashboardPage() {
               })}
             </tbody>
           </table>
+          </div>
         )}
       </div>
     </div>
@@ -156,7 +158,7 @@ export default function PharmacyDashboardPage() {
 }
 
 const s = {
-  page:  { padding: '2rem', maxWidth: 1200, margin: '0 auto' },
+  page:  { maxWidth: 1200, margin: '0 auto' },
   center:{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '60vh', color: '#64748b' },
   h1:    { fontSize: '1.5rem', fontWeight: 700, color: '#0f1f3d', margin: 0 },
   h2:    { fontSize: '1rem', fontWeight: 700, color: '#0f1f3d', margin: 0 },

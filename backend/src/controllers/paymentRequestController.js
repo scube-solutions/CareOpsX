@@ -1,8 +1,8 @@
-const supabase = require('../utils/supabase');
 
 // Patient creates a "pay at reception" request
 const createRequest = async (req, res) => {
   try {
+    const supabase = req.db;
     const { patient_name, patient_phone, patient_user_id, doctor_id, doctor_name, specialty, appointment_date, appointment_time, consultation_fee } = req.body;
     if (!patient_name || !consultation_fee) return res.status(400).json({ error: 'patient_name and consultation_fee required' });
 
@@ -28,6 +28,7 @@ const createRequest = async (req, res) => {
 // Receptionist gets all pending requests
 const getPendingRequests = async (req, res) => {
   try {
+    const supabase = req.db;
     const { data, error } = await supabase.from('appointment_payment_requests')
       .select('*')
       .eq('status', 'pending')
@@ -40,6 +41,7 @@ const getPendingRequests = async (req, res) => {
 // Receptionist marks payment received
 const approveRequest = async (req, res) => {
   try {
+    const supabase = req.db;
     const { id } = req.params;
     const { payment_mode = 'cash' } = req.body || {};
 
@@ -115,6 +117,7 @@ const approveRequest = async (req, res) => {
 // Patient polls status of their request
 const checkStatus = async (req, res) => {
   try {
+    const supabase = req.db;
     const { data, error } = await supabase.from('appointment_payment_requests')
       .select('id, status, approved_at')
       .eq('id', req.params.id).single();
