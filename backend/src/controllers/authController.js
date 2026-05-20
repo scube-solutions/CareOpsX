@@ -242,4 +242,71 @@ const changePassword = async (req, res) => {
   }
 };
 
-module.exports = { register, login, forgotPassword, resetPassword, changePassword };
+/* ─────────────────────────────────────────
+   ADMIN / CLINIC SELF-REGISTRATION
+───────────────────────────────────────── */
+const adminRegister = async (req, res) => {
+  try {
+    const { email, display_name, org_name, phone, password, plan } = req.body;
+
+    if (!email || !display_name || !org_name || !phone || !password)
+      return res.status(400).json({ error: 'All fields are required' });
+    if (password.length < 8)
+      return res.status(400).json({ error: 'Password must be at least 8 characters' });
+    if (!/[A-Z]/.test(password) || !/[a-z]/.test(password) || !/[0-9]/.test(password))
+      return res.status(400).json({ error: 'Password must have uppercase, lowercase, and number' });
+    if (!/^\d{10}$/.test(phone))
+      return res.status(400).json({ error: 'Phone must be 10 digits' });
+
+    const { data: existing } = await supabase.from('users').select('id').eq('email', email).maybeSingle();
+    if (existing) return res.status(409).json({ error: 'Email already registered' });
+
+    // Build slug from org name
+    const slug = org_name.trim().toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '')
+      + '-' + Math.floor(1000 + Math.random() * 9000);
+    const organization_code = slug.toUpperCase().slice(0, 12);
+
+    // Create organization first
+    const { data: org, error: orgErr } = await supabase.from('organizations').insert([{
+      organization_name : org_name.trim(),
+      slug,
+      organization_code,
+      billing_status    : 'trial',
+      payment_status    : 'pending',
+      portal_access     : { admin: true, doctor: true, patient: true, reception: true, lab: true, pharmacy: true, analytics: true },
+    }]).select('id, organization_name').single();
+
+    if (orgErr) throw orgErr;
+
+    const password_hash = await bcrypt.hash(password, 10);
+    const [first_name, ...rest] = display_name.trim().split(' ');
+    const last_name = rest.join(' ') || '-';
+
+    const { data: user, error: userErr } = await supabase.from('users').insert([{
+      first_name,
+      last_name,
+      email,
+      phone,
+      password_hash,
+      role_id         : 1,
+      roles           : [1],
+      organization_id : org.id,
+      is_active       : true,
+    }]).select('id, first_name, last_name, email, role_id, organization_id, created_at').single();
+
+    if (userErr) throw userErr;
+
+    const token = jwt.sign(
+      { id: user.id, email: user.email, role_id: 1, roles: [1], organization_id: org.id, organization_name: org.organization_name },
+      process.env.JWT_SECRET,
+      { expiresIn: '7d' }
+    );
+
+    return res.status(201).json({ message: 'Clinic registered successfully', token, user: { ...user, organization_name: org.organization_name } });
+  } catch (err) {
+    console.error('AdminRegister error:', err.message);
+    return res.status(500).json({ error: err.message || 'Internal server error' });
+  }
+};
+
+module.exports = { register, login, forgotPassword, resetPassword, changePassword, adminRegister };
