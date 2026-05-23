@@ -489,6 +489,55 @@ const deleteSpecialization = async (req, res) => {
   } catch (err) { return res.status(500).json({ error: err.message }); }
 };
 
+// ── Hospital Rooms ───────────────────────────────────────────────────────────
+const getRooms = async (req, res) => {
+  try {
+    const supabase = req.db;
+    const { organizationId } = await getOrganizationContext(req);
+    const { data, error } = await supabase.from('hospital_rooms').select('*').eq('organization_id', organizationId).order('room_name');
+    if (error) throw error;
+    return res.json({ rooms: data });
+  } catch (err) {
+    return res.status(500).json({ error: err.message });
+  }
+};
+
+const createRoom = async (req, res) => {
+  try {
+    const supabase = req.db;
+    const { organizationId } = await getOrganizationContext(req);
+    const { data, error } = await supabase.from('hospital_rooms').insert([{ ...req.body, organization_id: organizationId }]).select('*').single();
+    if (error) throw error;
+    return res.status(201).json({ room: data });
+  } catch (err) {
+    return res.status(500).json({ error: err.message });
+  }
+};
+
+const updateRoom = async (req, res) => {
+  try {
+    const supabase = req.db;
+    const { organizationId } = await getOrganizationContext(req);
+    const { data, error } = await supabase.from('hospital_rooms').update(req.body).eq('id', req.params.id).eq('organization_id', organizationId).select('*').single();
+    if (error) throw error;
+    return res.json({ room: data });
+  } catch (err) {
+    return res.status(500).json({ error: err.message });
+  }
+};
+
+const deleteRoom = async (req, res) => {
+  try {
+    const supabase = req.db;
+    const { organizationId } = await getOrganizationContext(req);
+    const { error } = await supabase.from('hospital_rooms').delete().eq('id', req.params.id).eq('organization_id', organizationId);
+    if (error) throw error;
+    return res.json({ message: 'Room deleted' });
+  } catch (err) {
+    return res.status(500).json({ error: err.message });
+  }
+};
+
 module.exports = {
   getHospitalProfile, upsertHospitalProfile,
   getBranches, createBranch, updateBranch, deleteBranch,
@@ -498,4 +547,5 @@ module.exports = {
   getUsers, createUser, updateUser, toggleUserActive, deleteUser, resetUserPassword,
   getLabTestCatalog, createLabTest, updateLabTest, deleteLabTest,
   getSpecializations, createSpecialization, toggleSpecialization, deleteSpecialization,
+  getRooms, createRoom, updateRoom, deleteRoom,
 };

@@ -1,4 +1,5 @@
 import './globals.css';
+import Script from 'next/script';
 
 export const metadata = {
   title       : 'CareOpsX — Hospital Management',
@@ -24,6 +25,7 @@ export default function RootLayout({ children }) {
       </head>
       <body style={{ fontFamily: 'var(--font-body)', margin: 0 }}>
         {children}
+        <Script src="https://checkout.razorpay.com/v1/checkout.js" strategy="lazyOnload" />
       </body>
     </html>
   );

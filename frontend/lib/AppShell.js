@@ -124,7 +124,22 @@ function SidebarContent({ groups, currentRole, roleLabel, user, onNavigate, coll
       <div style={{ padding: collapsed ? '12px 8px' : '12px 16px', borderTop: '1px solid rgba(255,255,255,.08)' }}>
         {!collapsed && (
           <>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 10 }}>
+            <div 
+              onClick={() => router.push('/admin/setup')}
+              style={{ 
+                display: 'flex', 
+                alignItems: 'center', 
+                gap: 10, 
+                marginBottom: 10,
+                cursor: 'pointer',
+                padding: '8px',
+                borderRadius: '8px',
+                transition: 'background 0.2s',
+                ':hover': { background: 'rgba(255,255,255,0.05)' }
+              }}
+              onMouseEnter={(e) => e.currentTarget.style.background = 'rgba(255,255,255,0.05)'}
+              onMouseLeave={(e) => e.currentTarget.style.background = 'transparent'}
+            >
               <div style={{ width: 34, height: 34, borderRadius: '50%', background: theme.teal, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 12, fontWeight: 700, color: '#fff', flexShrink: 0 }}>
                 {initials}
               </div>

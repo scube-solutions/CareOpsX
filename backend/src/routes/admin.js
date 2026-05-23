@@ -49,4 +49,10 @@ router.post('/specializations',             ...adminOnly, ctrl.createSpecializat
 router.patch('/specializations/:id/toggle', ...adminOnly, ctrl.toggleSpecialization);
 router.delete('/specializations/:id',       ...adminOnly, ctrl.deleteSpecialization);
 
+// Hospital Rooms
+router.get('/rooms', verifyToken, ctrl.getRooms);
+router.post('/rooms', ...adminOnly, ctrl.createRoom);
+router.put('/rooms/:id', ...adminOnly, ctrl.updateRoom);
+router.delete('/rooms/:id', ...adminOnly, ctrl.deleteRoom);
+
 module.exports = router;
