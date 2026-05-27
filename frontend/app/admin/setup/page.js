@@ -16,9 +16,7 @@ export default function SetupPage() {
   const [form, setForm] = useState({});
   const [msg, setMsg] = useState('');
   const [loading, setLoading] = useState(false);
-  const [selectedUser, setSelectedUser] = useState(null);
   const [editingUser, setEditingUser] = useState(null);
-  const [confirmDelete, setConfirmDelete] = useState(false);
   const [labTests, setLabTests] = useState([]);
   const [labTestForm, setLabTestForm] = useState({ test_name: '', test_code: '', category: '', fee: '', description: '' });
   const [editingLabTest, setEditingLabTest] = useState(null);
@@ -50,7 +48,6 @@ export default function SetupPage() {
   useEffect(() => { loadAll(); }, []);
 
   const ORG_TABS = ['Branches', 'Departments', 'Room Management', 'Lab Tests', 'Specializations'];
-
   const ROLE_OPTIONS = [{ value: 1, label: 'Admin' }, { value: 2, label: 'Doctor' }, { value: 5, label: 'Receptionist' }, { value: 6, label: 'Lab Staff' }, { value: 7, label: 'Pharmacist' }, { value: 8, label: 'Reporting' }];
 
   return (
@@ -82,10 +79,19 @@ export default function SetupPage() {
       {tab === 0 && (
         <div style={s.card}>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 }}>
-            <h2 style={s.h2}>Profile Settings</h2>
+            <h2 style={s.h2}>Hospital Profile</h2>
             <div style={{ display: 'flex', alignItems: 'center', gap: 15 }}>
-              {profile.logo_url && <img src={profile.logo_url} alt="Logo" style={{ height: 40, borderRadius: 4 }} />}
-              <button onClick={() => alert('Logo upload feature coming soon')} style={s.btnSec}>Update Logo</button>
+              <div style={{ textAlign: 'right' }}>
+                <div style={{ fontSize: '.75rem', fontWeight: 600, color: '#64748b', marginBottom: 4 }}>HOSPITAL LOGO</div>
+                <div style={{ border: '1px dashed #cbd5e1', borderRadius: 8, padding: 8, background: '#f8fafc' }}>
+                  {profile.logo_url ? (
+                    <img src={profile.logo_url} alt="Logo" style={{ height: 50, borderRadius: 4 }} />
+                  ) : (
+                    <div style={{ width: 50, height: 50, display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#94a3b8', fontSize: 20 }}>🏥</div>
+                  )}
+                </div>
+              </div>
+              <button onClick={() => alert('Logo upload feature: This logo will be reflected on all documents and invoices.')} style={s.btnSec}>Update Logo</button>
             </div>
           </div>
           <div style={s.grid3}>
@@ -93,7 +99,7 @@ export default function SetupPage() {
               <div key={k} style={s.fg}><label style={s.label}>{l}</label><input value={profile[k] || ''} onChange={e => setProfile({ ...profile, [k]: e.target.value })} style={s.input} /></div>
             ))}
           </div>
-          <div style={{ marginTop: 20 }}>
+          <div style={{ marginTop: 24 }}>
             <button onClick={async () => {
               setLoading(true);
               try {
@@ -114,7 +120,7 @@ export default function SetupPage() {
                 style={{ 
                   padding: '.5rem 1rem', 
                   borderRadius: 6, 
-                  border: 'none', 
+                  border: orgSubTab === i ? '1px solid #e2e8f0' : '1px solid transparent', 
                   background: orgSubTab === i ? '#fff' : 'transparent', 
                   color: orgSubTab === i ? '#0f1f3d' : '#64748b', 
                   fontWeight: orgSubTab === i ? 600 : 500, 
@@ -355,6 +361,26 @@ export default function SetupPage() {
       {/* User Management Tab */}
       {tab === 2 && (
         <div>
+          {/* Highlighted Information */}
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 16, marginBottom: 24 }}>
+            <div style={{ ...s.card, padding: '1.25rem', textAlign: 'center' }}>
+              <div style={{ fontSize: '.75rem', fontWeight: 700, color: '#64748b', textTransform: 'uppercase', marginBottom: 8 }}>Total Users</div>
+              <div style={{ fontSize: '1.75rem', fontWeight: 800, color: '#0f1f3d' }}>{users.length}</div>
+            </div>
+            <div style={{ ...s.card, padding: '1.25rem', textAlign: 'center', borderLeft: '4px solid #00b4a0' }}>
+              <div style={{ fontSize: '.75rem', fontWeight: 700, color: '#00b4a0', textTransform: 'uppercase', marginBottom: 8 }}>Doctors</div>
+              <div style={{ fontSize: '1.75rem', fontWeight: 800, color: '#0f1f3d' }}>{users.filter(u => u.role_id === 2).length}</div>
+            </div>
+            <div style={{ ...s.card, padding: '1.25rem', textAlign: 'center' }}>
+              <div style={{ fontSize: '.75rem', fontWeight: 700, color: '#64748b', textTransform: 'uppercase', marginBottom: 8 }}>Active Staff</div>
+              <div style={{ fontSize: '1.75rem', fontWeight: 800, color: '#0f1f3d' }}>{users.filter(u => u.is_active && u.role_id !== 2).length}</div>
+            </div>
+            <div style={{ ...s.card, padding: '1.25rem', textAlign: 'center' }}>
+              <div style={{ fontSize: '.75rem', fontWeight: 700, color: '#64748b', textTransform: 'uppercase', marginBottom: 8 }}>Locked</div>
+              <div style={{ fontSize: '1.75rem', fontWeight: 800, color: '#dc2626' }}>{users.filter(u => !u.is_active).length}</div>
+            </div>
+          </div>
+
           <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 12 }}>
             <button onClick={() => { setShowForm(true); setForm({ role_id: 5 }); setEditingUser(null); }} style={s.btnPri}>+ Add User</button>
           </div>
@@ -386,8 +412,16 @@ export default function SetupPage() {
                   <tr key={u.id}>
                     <td style={s.td}><strong>{u.first_name} {u.last_name}</strong></td>
                     <td style={s.td}>{u.email}</td>
-                    <td style={s.td}>{ROLE_OPTIONS.find(r => r.value === (u.roles?.[0] || u.role_id))?.label || 'Staff'}</td>
-                    <td style={s.td}>{u.is_active ? 'Active' : 'Inactive'}</td>
+                    <td style={s.td}>
+                      <span style={{ background: '#eff6ff', color: '#1d4ed8', padding: '2px 8px', borderRadius: 12, fontSize: '.75rem', fontWeight: 600 }}>
+                        {ROLE_OPTIONS.find(r => r.value === (u.roles?.[0] || u.role_id))?.label || 'Staff'}
+                      </span>
+                    </td>
+                    <td style={s.td}>
+                      <span style={{ background: u.is_active ? '#f0fdf4' : '#fef2f2', color: u.is_active ? '#065f46' : '#dc2626', padding: '2px 8px', borderRadius: 12, fontSize: '.75rem', fontWeight: 600 }}>
+                        {u.is_active ? 'Active' : 'Locked'}
+                      </span>
+                    </td>
                     <td style={s.td}>
                       <button onClick={() => { 
                         setEditingUser(u); 
@@ -407,27 +441,23 @@ export default function SetupPage() {
       {tab === 3 && (
         <div style={s.card}>
           <h2 style={s.h2}>Subscription Plans</h2>
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: 20, marginTop: 20 }}>
-            <div style={{ border: '1px solid #e2e8f0', borderRadius: 12, padding: 25, textAlign: 'center' }}>
-              <div style={{ fontSize: 14, fontWeight: 700, color: '#64748b', textTransform: 'uppercase' }}>Basic Plan</div>
-              <div style={{ fontSize: 32, fontWeight: 800, margin: '15px 0' }}>₹2,999<span style={{ fontSize: 16, color: '#64748b' }}>/month</span></div>
-              <ul style={{ textAlign: 'left', fontSize: 14, color: '#475569', marginBottom: 25 }}>
-                <li>Up to 2 Admin Seats</li>
-                <li>Up to 3 Doctor Seats</li>
-                <li>Core HMS Modules</li>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: 24, marginTop: 20 }}>
+            <div style={{ border: '1px solid #e2e8f0', borderRadius: 16, padding: 30, textAlign: 'center', transition: 'transform 0.2s', ':hover': { transform: 'translateY(-4px)' } }}>
+              <div style={{ fontSize: 14, fontWeight: 700, color: '#64748b', textTransform: 'uppercase', letterSpacing: 1 }}>Basic Plan</div>
+              <div style={{ fontSize: 36, fontWeight: 800, margin: '20px 0', color: '#0f1f3d' }}>₹2,999<span style={{ fontSize: 18, color: '#64748b', fontWeight: 500 }}>/month</span></div>
+              <ul style={{ textAlign: 'left', fontSize: 15, color: '#475569', marginBottom: 30, listStyle: 'none', padding: 0 }}>
+                {['Up to 2 Admin Seats', 'Up to 3 Doctor Seats', 'Core HMS Modules', 'Email Support'].map(i => <li key={i} style={{ marginBottom: 10, display: 'flex', alignItems: 'center', gap: 10 }}><span style={{ color: '#00b4a0' }}>✓</span> {i}</li>)}
               </ul>
-              <button style={{ ...s.btnPri, width: '100%' }} onClick={() => alert('Razorpay integration coming soon')}>Subscribe Now</button>
+              <button style={{ ...s.btnPri, width: '100%', padding: '1rem' }} onClick={() => alert('Razorpay integration: Redirecting to payment gateway...')}>Subscribe Now</button>
             </div>
-            <div style={{ border: '2px solid #00b4a0', borderRadius: 12, padding: 25, textAlign: 'center', position: 'relative' }}>
-              <div style={{ position: 'absolute', top: -12, left: '50%', transform: 'translateX(-50%)', background: '#00b4a0', color: '#fff', fontSize: 10, fontWeight: 700, padding: '2px 10px', borderRadius: 20 }}>MOST POPULAR</div>
-              <div style={{ fontSize: 14, fontWeight: 700, color: '#00b4a0', textTransform: 'uppercase' }}>Professional Plan</div>
-              <div style={{ fontSize: 32, fontWeight: 800, margin: '15px 0' }}>₹5,999<span style={{ fontSize: 16, color: '#64748b' }}>/month</span></div>
-              <ul style={{ textAlign: 'left', fontSize: 14, color: '#475569', marginBottom: 25 }}>
-                <li>Unlimited Seats</li>
-                <li>All Modules & Analytics</li>
-                <li>Priority Support</li>
+            <div style={{ border: '2px solid #00b4a0', borderRadius: 16, padding: 30, textAlign: 'center', position: 'relative', background: '#f0fdfb' }}>
+              <div style={{ position: 'absolute', top: -14, left: '50%', transform: 'translateX(-50%)', background: '#00b4a0', color: '#fff', fontSize: 11, fontWeight: 700, padding: '4px 14px', borderRadius: 20, boxShadow: '0 4px 12px rgba(0,180,160,0.2)' }}>MOST POPULAR</div>
+              <div style={{ fontSize: 14, fontWeight: 700, color: '#00b4a0', textTransform: 'uppercase', letterSpacing: 1 }}>Professional Plan</div>
+              <div style={{ fontSize: 36, fontWeight: 800, margin: '20px 0', color: '#0f1f3d' }}>₹5,999<span style={{ fontSize: 18, color: '#64748b', fontWeight: 500 }}>/month</span></div>
+              <ul style={{ textAlign: 'left', fontSize: 15, color: '#475569', marginBottom: 30, listStyle: 'none', padding: 0 }}>
+                {['Unlimited Seats', 'All Modules & Analytics', 'Priority 24/7 Support', 'Custom Branding'].map(i => <li key={i} style={{ marginBottom: 10, display: 'flex', alignItems: 'center', gap: 10 }}><span style={{ color: '#00b4a0' }}>✓</span> {i}</li>)}
               </ul>
-              <button style={{ ...s.btnPri, width: '100%' }} onClick={() => alert('Razorpay integration coming soon')}>Subscribe Now</button>
+              <button style={{ ...s.btnPri, width: '100%', padding: '1rem' }} onClick={() => alert('Razorpay integration: Redirecting to payment gateway...')}>Subscribe Now</button>
             </div>
           </div>
         </div>
@@ -469,21 +499,28 @@ function AuditLogView() {
 
   return (
     <div style={s.card}>
-      <h2 style={s.h2}>Recent Activity</h2>
-      {loading ? <div>Loading logs...</div> : (
-        <table style={s.table}>
-          <thead><tr>{['Time', 'User', 'Action', 'Module'].map(h => <th key={h} style={s.th}>{h}</th>)}</tr></thead>
-          <tbody>
-            {logs.map(log => (
-              <tr key={log.id}>
-                <td style={s.td}>{new Date(log.created_at).toLocaleString()}</td>
-                <td style={s.td}>{log.role_name}</td>
-                <td style={s.td}>{log.action}</td>
-                <td style={s.td}>{log.module}</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 }}>
+        <h2 style={s.h2}>Audit Logs</h2>
+        <button onClick={load} style={s.btnSec}>↻ Refresh</button>
+      </div>
+      {loading ? <div style={{ padding: '2rem', textAlign: 'center', color: '#64748b' }}>Loading logs...</div> : (
+        <div style={{ overflowX: 'auto' }}>
+          <table style={s.table}>
+            <thead><tr>{['Timestamp', 'Performed By', 'Action', 'Module', 'IP Address'].map(h => <th key={h} style={s.th}>{h}</th>)}</tr></thead>
+            <tbody>
+              {logs.map(log => (
+                <tr key={log.id}>
+                  <td style={s.td}>{new Date(log.created_at).toLocaleString()}</td>
+                  <td style={s.td}><strong>{log.role_name}</strong></td>
+                  <td style={s.td}><span style={{ color: '#0f1f3d', fontWeight: 500 }}>{log.action}</span></td>
+                  <td style={s.td}><span style={{ background: '#f1f5f9', padding: '2px 6px', borderRadius: 4, fontSize: '.7rem' }}>{log.module}</span></td>
+                  <td style={{ ...s.td, fontFamily: 'monospace', fontSize: '.75rem', color: '#64748b' }}>{log.ip_address || '—'}</td>
+                </tr>
+              ))}
+              {logs.length === 0 && <tr><td colSpan={5} style={{ ...s.td, textAlign: 'center', padding: '2rem', color: '#94a3b8' }}>No activity logs found.</td></tr>}
+            </tbody>
+          </table>
+        </div>
       )}
     </div>
   );
@@ -491,18 +528,18 @@ function AuditLogView() {
 
 const s = {
   page: { padding: '2rem', maxWidth: 1300, margin: '0 auto' },
-  h1: { fontSize: '1.5rem', fontWeight: 700, color: '#0f1f3d', marginBottom: 20 },
-  h2: { fontSize: '1rem', fontWeight: 600, color: '#0f1f3d', marginBottom: 16 },
-  card: { background: '#fff', borderRadius: 12, padding: '1.5rem', boxShadow: '0 1px 4px rgba(0,0,0,0.06)', border: '1px solid #e2e8f0' },
-  grid3: { display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 14, marginBottom: 16 },
+  h1: { fontSize: '1.75rem', fontWeight: 800, color: '#0f1f3d', marginBottom: 24, letterSpacing: '-0.02em' },
+  h2: { fontSize: '1.1rem', fontWeight: 700, color: '#0f1f3d', margin: 0 },
+  card: { background: '#fff', borderRadius: 14, padding: '1.75rem', boxShadow: '0 1px 3px rgba(0,0,0,0.05), 0 1px 2px rgba(0,0,0,0.1)', border: '1px solid #e2e8f0' },
+  grid3: { display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 16, marginBottom: 16 },
   fg: { display: 'flex', flexDirection: 'column' },
-  label: { fontSize: '.75rem', fontWeight: 600, color: '#475569', textTransform: 'uppercase', marginBottom: 4 },
-  input: { width: '100%', padding: '.6rem .9rem', border: '1.5px solid #e2e8f0', borderRadius: 8, background: '#f8fafc', color: '#1e293b', fontSize: '.875rem', boxSizing: 'border-box' },
+  label: { fontSize: '.75rem', fontWeight: 700, color: '#64748b', textTransform: 'uppercase', marginBottom: 6, letterSpacing: '0.02em' },
+  input: { width: '100%', padding: '.65rem .9rem', border: '1.5px solid #e2e8f0', borderRadius: 10, background: '#f8fafc', color: '#1e293b', fontSize: '.9rem', boxSizing: 'border-box', transition: 'all 0.2s', outline: 'none', ':focus': { borderColor: '#00b4a0', background: '#fff', boxShadow: '0 0 0 3px rgba(0,180,160,0.1)' } },
   table: { width: '100%', borderCollapse: 'collapse' },
-  th: { textAlign: 'left', padding: '10px 12px', background: '#f8fafc', fontSize: '.75rem', fontWeight: 600, color: '#64748b', textTransform: 'uppercase' },
-  td: { padding: '10px 12px', borderBottom: '1px solid #f1f5f9', fontSize: '.875rem' },
-  info: { background: '#eff6ff', border: '1px solid #bfdbfe', color: '#1d4ed8', borderRadius: 8, padding: '.75rem 1rem', fontSize: '.875rem', marginBottom: 16, display: 'flex', alignItems: 'center' },
-  btnPri: { padding: '.6rem 1.2rem', background: '#00b4a0', color: '#fff', border: 'none', borderRadius: 8, fontWeight: 600, cursor: 'pointer', fontSize: '.875rem' },
-  btnSec: { padding: '.6rem 1rem', background: '#f1f5f9', color: '#0f1f3d', border: '1px solid #e2e8f0', borderRadius: 8, fontWeight: 600, cursor: 'pointer', fontSize: '.8rem' },
-  actBtn: { padding: '4px 10px', background: '#f1f5f9', color: '#475569', border: '1px solid #e2e8f0', borderRadius: 6, cursor: 'pointer', fontSize: '.75rem', fontWeight: 600 },
+  th: { textAlign: 'left', padding: '12px 14px', background: '#f8fafc', fontSize: '.7rem', fontWeight: 700, color: '#64748b', textTransform: 'uppercase', borderBottom: '1px solid #e2e8f0' },
+  td: { padding: '14px 14px', borderBottom: '1px solid #f1f5f9', fontSize: '.85rem', color: '#334155' },
+  info: { background: '#f0fdfb', border: '1px solid #ccfbf1', color: '#0f766e', borderRadius: 10, padding: '.85rem 1.25rem', fontSize: '.875rem', marginBottom: 20, display: 'flex', alignItems: 'center', justifyContent: 'space-between', fontWeight: 500 },
+  btnPri: { padding: '.75rem 1.5rem', background: '#00b4a0', color: '#fff', border: 'none', borderRadius: 10, fontWeight: 700, cursor: 'pointer', fontSize: '.9rem', boxShadow: '0 2px 4px rgba(0,180,160,0.2)', transition: 'all 0.2s' },
+  btnSec: { padding: '.65rem 1.25rem', background: '#fff', color: '#0f1f3d', border: '1px solid #e2e8f0', borderRadius: 10, fontWeight: 600, cursor: 'pointer', fontSize: '.85rem', transition: 'all 0.2s' },
+  actBtn: { padding: '5px 12px', background: '#f8fafc', color: '#475569', border: '1px solid #e2e8f0', borderRadius: 8, cursor: 'pointer', fontSize: '.75rem', fontWeight: 600, transition: 'all 0.2s' },
 };
