@@ -1,7 +1,7 @@
 const { auditLog } = require('../middlewares/audit');
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
-const attachRelated = async (rows) => {
+const attachRelated = async (rows, supabase) => {
   if (!rows.length) return rows;
 
   // Patients
@@ -53,7 +53,7 @@ const getFollowUps = async (req, res) => {
 
     const { data, error } = await query;
     if (error) throw error;
-    const follow_ups = await attachRelated(data || []);
+    const follow_ups = await attachRelated(data || [], supabase);
     return res.json({ follow_ups });
   } catch (err) {
     return res.status(500).json({ error: err.message });
@@ -68,7 +68,7 @@ const getFollowUpById = async (req, res) => {
       .select('*')
       .eq('id', req.params.id).single();
     if (error || !data) return res.status(404).json({ error: 'Follow-up not found' });
-    const [follow_up] = await attachRelated([data]);
+    const [follow_up] = await attachRelated([data], supabase);
     return res.json({ follow_up });
   } catch (err) {
     return res.status(500).json({ error: err.message });
@@ -137,7 +137,7 @@ const getMissedFollowUps = async (req, res) => {
       .order('follow_up_date', { ascending: true });
 
     if (error) throw error;
-    const missed_follow_ups = await attachRelated(data || []);
+    const missed_follow_ups = await attachRelated(data || [], supabase);
     return res.json({ missed_follow_ups, count: missed_follow_ups.length });
   } catch (err) {
     return res.status(500).json({ error: err.message });
@@ -158,7 +158,7 @@ const getUpcomingFollowUps = async (req, res) => {
       .order('follow_up_date', { ascending: true });
 
     if (error) throw error;
-    const upcoming = await attachRelated(data || []);
+    const upcoming = await attachRelated(data || [], supabase);
     return res.json({ upcoming });
   } catch (err) {
     return res.status(500).json({ error: err.message });

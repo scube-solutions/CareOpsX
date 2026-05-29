@@ -12,7 +12,13 @@ export const api = async (endpoint, options = {}) => {
     ...options
   });
 
-  const data = await res.json();
+  const text = await res.text();
+  let data;
+  try {
+    data = JSON.parse(text);
+  } catch {
+    throw new Error(res.ok ? 'Invalid server response' : `Server error ${res.status}: endpoint may not exist or server is unreachable`);
+  }
   if (!res.ok) throw new Error(data.error || data.message || 'Something went wrong');
   return data;
 };

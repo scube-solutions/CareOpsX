@@ -1,7 +1,7 @@
 'use client';
 import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { getUser } from '@/lib/auth';
+import { getUser, getDashboardRoute } from '@/lib/auth';
 import AppShell from '@/lib/AppShell';
 
 export const T = {
@@ -100,11 +100,15 @@ const NAV_GROUPS = [
     ],
   },
   {
+    label: 'HR',
+    items: [
+      { href:'/admin/hr', label:'HRMS', Icon:Icons.Users },
+    ],
+  },
+  {
     label: 'System',
     items: [
-      { href:'/admin/setup',         label:'Setup',         Icon:Icons.Staff     },
       { href:'/admin/notifications', label:'Notifications', Icon:Icons.Calendar  },
-      { href:'/admin/audit',         label:'Audit Logs',    Icon:Icons.Dashboard },
     ],
   },
 ];
@@ -117,8 +121,11 @@ export default function AdminLayout({ children }) {
   useEffect(() => {
     const u = getUser();
     const roles = Array.isArray(u?.roles) && u.roles.length ? u.roles : [u?.role_id];
-    if (!u || !roles.includes(1)) {
+    if (!u) {
       router.push('/login');
+    } else if (!roles.includes(1)) {
+      // logged in but not admin — send to own dashboard, not login
+      router.push(getDashboardRoute(u.role_id));
     } else {
       setUser(u);
       setReady(true);
@@ -130,7 +137,7 @@ export default function AdminLayout({ children }) {
   const orgLabel = user?.organization_name || 'Administrator';
 
   return (
-    <AppShell title="Admin Console" roleLabel={orgLabel} currentRole={1} groups={NAV_GROUPS} user={user} collapsibleDesktop defaultCollapsed>
+    <AppShell title="Admin Console" roleLabel={orgLabel} currentRole={1} groups={NAV_GROUPS} user={user} collapsibleDesktop defaultCollapsed settingsHref="/admin/setup">
       {children}
     </AppShell>
   );

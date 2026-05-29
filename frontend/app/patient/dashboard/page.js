@@ -31,7 +31,6 @@ const NAV_ITEMS = [
   { key: 'prescriptions',  label: 'Prescriptions',     icon: '💊', href: '/patient/prescriptions' },
   { key: 'followups',      label: 'Follow-ups',        icon: '📅', href: '/patient/followups' },
   { key: 'payments',       label: 'Payment History',   icon: '💳', href: '/patient/payments' },
-  { key: 'profile',        label: 'My Profile',        icon: '👤', href: '/patient/profile' },
 ];
 
 const SECTION_TITLES = {
@@ -42,10 +41,7 @@ const SECTION_TITLES = {
   doctors:      'Doctors Visited',
 };
 
-function Sidebar({ active, onNav, user, collapsed, onToggle }) {
-  const initials = user?.name
-    ? user.name.split(' ').map(w => w[0]).join('').slice(0, 2).toUpperCase()
-    : 'P';
+function Sidebar({ active, onNav, collapsed, onToggle }) {
 
   return (
     <aside style={{
@@ -121,21 +117,6 @@ function Sidebar({ active, onNav, user, collapsed, onToggle }) {
         </a>
       </nav>
 
-      {!collapsed && (
-        <div style={{ padding: '12px 16px', borderTop: '1px solid rgba(255,255,255,.08)' }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 10 }}>
-            <div style={{ width: 32, height: 32, borderRadius: '50%', background: T.teal, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 12, fontWeight: 700, color: '#fff', flexShrink: 0 }}>{initials}</div>
-            <div style={{ overflow: 'hidden' }}>
-              <div style={{ fontSize: 13, fontWeight: 600, color: '#fff', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{user?.name || 'Patient'}</div>
-              <div style={{ fontSize: 11, color: 'rgba(255,255,255,.35)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{user?.email || ''}</div>
-            </div>
-          </div>
-          <button onClick={() => logout()} style={{
-            width: '100%', padding: '7px', borderRadius: 6, border: '1px solid rgba(255,255,255,.12)',
-            background: 'transparent', color: 'rgba(255,255,255,.45)', fontFamily: T.body, fontSize: 12, cursor: 'pointer',
-          }}>Sign Out</button>
-        </div>
-      )}
     </aside>
   );
 }
@@ -332,6 +313,8 @@ export default function PatientDashboard() {
   const [loading, setLoading]           = useState(true);
   const [error, setError]               = useState('');
   const [detailModal, setDetailModal]   = useState(null); // { appt, loading, data }
+  const [profileOpen, setProfileOpen]   = useState(false);
+  const initials = user?.name ? user.name.split(' ').map(w => w[0]).join('').slice(0, 2).toUpperCase() : 'P';
 
   useEffect(() => {
     const u = getUser();
@@ -426,6 +409,36 @@ export default function PatientDashboard() {
             borderRadius: 8, padding: isMobile ? '8px 12px' : '8px 18px', fontSize: 13, fontWeight: 600,
             cursor: 'pointer', textDecoration: 'none', fontFamily: T.body,
           }}>+ Book Appointment</a>
+
+          {/* Profile avatar */}
+          <div style={{ position: 'relative', flexShrink: 0 }}>
+            <button
+              onClick={() => setProfileOpen(o => !o)}
+              style={{ width: 34, height: 34, borderRadius: '50%', background: T.teal, border: 'none', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 12, fontWeight: 700, color: '#fff', cursor: 'pointer' }}
+            >
+              {initials}
+            </button>
+            {profileOpen && (
+              <div style={{ position: 'absolute', top: 42, right: 0, background: '#fff', border: `1px solid ${T.border}`, borderRadius: 12, boxShadow: '0 8px 32px rgba(15,31,61,.12)', minWidth: 200, zIndex: 200, overflow: 'hidden' }}>
+                <div style={{ padding: '12px 16px', borderBottom: '1px solid #f1f5f9' }}>
+                  <div style={{ fontWeight: 700, fontSize: 14, color: T.navy }}>{user?.name || 'Patient'}</div>
+                  <div style={{ fontSize: 12, color: T.muted }}>{user?.email || ''}</div>
+                  <div style={{ fontSize: 11, color: T.teal, fontWeight: 600, marginTop: 2 }}>Patient</div>
+                </div>
+                <a href="/patient/profile" style={{ display: 'block', padding: '10px 16px', fontSize: 13, color: T.navy, textDecoration: 'none' }}
+                  onMouseEnter={e => e.currentTarget.style.background = '#f8fafc'}
+                  onMouseLeave={e => e.currentTarget.style.background = 'none'}>
+                  Edit Profile
+                </a>
+                <div style={{ height: 1, background: '#f1f5f9' }} />
+                <button onClick={() => { logout(); }} style={{ width: '100%', padding: '10px 16px', background: 'none', border: 'none', textAlign: 'left', fontSize: 13, color: '#ef4444', cursor: 'pointer' }}
+                  onMouseEnter={e => e.currentTarget.style.background = '#fef2f2'}
+                  onMouseLeave={e => e.currentTarget.style.background = 'none'}>
+                  Logout
+                </button>
+              </div>
+            )}
+          </div>
         </header>
 
         <div style={{ padding: isMobile ? '18px 16px 24px' : '28px 28px' }}>

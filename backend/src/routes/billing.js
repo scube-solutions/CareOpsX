@@ -17,4 +17,8 @@ router.post('/refund', verifyToken, requireRole([1]), ctrl.processRefund);
 router.get('/payment-register', verifyToken, requireRole([1, 8]), ctrl.getPaymentRegister);
 router.get('/reception-payments', ...adminReceptionist, ctrl.getReceptionPayments);
 
+// Razorpay subscription
+router.post('/razorpay/create-order', verifyToken, requireRole([1]), ctrl.createRazorpayOrder);
+router.post('/razorpay/verify',       verifyToken, requireRole([1]), ctrl.verifyRazorpayPayment);
+
 module.exports = router;

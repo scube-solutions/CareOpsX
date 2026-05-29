@@ -5,27 +5,14 @@ import Link from 'next/link';
 
 const N = '#0f1f3d', T = '#00b4a0', TB = '#13cfbd';
 
-function LogoIcon({ size = 36 }) {
-  return (
-    <div style={{ width: size, height: size, background: 'linear-gradient(135deg, #1e3f85 0%, #13cfbd 100%)', borderRadius: size * 0.27, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
-      <svg viewBox="0 0 24 24" fill="none" width={size * 0.5} height={size * 0.5}>
-        <rect x="10.5" y="4" width="3" height="16" rx="1.5" fill="white"/>
-        <rect x="4" y="10.5" width="16" height="3" rx="1.5" fill="white"/>
-      </svg>
-    </div>
-  );
-}
-
 function Logo({ light }) {
   return (
-    <div style={{ display: 'flex', alignItems: 'center', gap: '0.65rem', textDecoration: 'none' }}>
-      <LogoIcon size={36} />
-      <div>
-        <div style={{ fontFamily: 'var(--font-display)', fontSize: '1.1rem', color: light ? '#fff' : N, lineHeight: 1.1 }}>
-          CareOps<span style={{ color: T }}>X</span>
-        </div>
-        <div style={{ fontSize: '0.6rem', color: light ? 'rgba(255,255,255,0.45)' : '#94a3b8', letterSpacing: '0.04em' }}>Hospital Management</div>
-      </div>
+    <div style={{ display: 'flex', alignItems: 'center', textDecoration: 'none' }}>
+      <img
+        src="/careopsx_logo.png"
+        alt="CareOpsX"
+        style={{ height: 40, width: 'auto', objectFit: 'contain', filter: light ? 'brightness(0) invert(1)' : 'none' }}
+      />
     </div>
   );
 }
