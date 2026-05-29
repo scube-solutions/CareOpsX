@@ -56,14 +56,31 @@ canvas {
 
 .app-shell {
   display: flex;
-  min-height: 100vh;
+  height: 100vh;
+  overflow: hidden;
   background: #f5f8fc;
 }
 
 .app-shell-main {
   flex: 1;
   min-width: 0;
-  overflow: auto;
+  overflow-y: auto;
+}
+
+.app-shell-topbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 24px;
+  background: #fff;
+  border-bottom: 1px solid #e2e8f0;
+  position: sticky;
+  top: 0;
+  z-index: 10;
+}
+
+.app-shell-topbar-desktop {
+  display: flex;
 }
 
 .app-shell-mobilebar {
@@ -175,10 +192,17 @@ canvas {
 @media (max-width: 1024px) {
   .app-shell {
     display: block;
+    height: auto;
+    overflow: visible;
   }
 
   .app-shell-main {
     min-height: 100vh;
+    overflow-y: visible;
+  }
+
+  .app-shell-topbar-desktop {
+    display: none;
   }
 
   .app-shell-mobilebar {

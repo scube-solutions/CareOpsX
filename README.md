@@ -358,6 +358,15 @@ The backend uses JWT-protected routes for most operational features. Public-faci
 - There is no root-level combined startup script yet; frontend and backend are started separately.
 - `frontend/README.md` still contains the default Next.js starter content.
 - The project includes `test.sh`, which appears to be a legacy API test script and may not match every current route or response shape.
+- `frontend/public/home.html` is a standalone static landing page with its own auth modal. It uses a dynamic API base URL to support both local development and production:
+
+  ```js
+  const API_BASE = window.location.hostname === 'localhost'
+    ? 'http://localhost:5000'
+    : 'https://care-opsx-api.vercel.app';
+  ```
+
+  All fetch calls in that file use `API_BASE` as the prefix. If the production API domain changes, update this value in `home.html`.
 
 ## Recommended Development Flow
 

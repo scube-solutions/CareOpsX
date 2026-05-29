@@ -2427,7 +2427,7 @@
 
       <div class="nav-cta">
         <a href="#" class="btn btn-ghost nav-login-btn" onclick="openModal('login');return false">Login</a>
-        <a href="book-demo.html" class="btn btn-teal">Book Demo</a>
+        <a href="/book-demo" class="btn btn-teal">Book Demo</a>
         <button class="nav-toggle" aria-label="Toggle menu" id="navToggle"><span></span></button>
       </div>
     </div>
@@ -2905,7 +2905,7 @@
               <li><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round"
                   stroke-linejoin="round"><path d="M20 6 9 17l-5-5" /></svg> 1 clinic location</li>
             </ul>
-            <button class="btn btn-ghost" style="justify-content:center;width:100%" onclick="openModal('register','basic')">Get Started</button>
+            <button class="btn btn-ghost" style="justify-content:center;width:100%" onclick="triggerRazorpay('basic')">Get Started</button>
           </div>
 
           <!-- PREMIUM -->
@@ -2938,7 +2938,7 @@
               <li><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round"
                   stroke-linejoin="round"><path d="M20 6 9 17l-5-5" /></svg> Complete operation management</li>
             </ul>
-            <button class="btn btn-teal" style="justify-content:center;width:100%" onclick="openModal('register','premium')">Choose Premium</button>
+            <button class="btn btn-teal" style="justify-content:center;width:100%" onclick="triggerRazorpay('premium')">Choose Premium</button>
           </div>
 
           <!-- ENTERPRISE -->
@@ -2973,6 +2973,93 @@
     </section>
 
     <!-- ========== CTA ========== -->
+    <!-- Book a Demo moved to /book-demo page -->
+    <section class="book-demo" id="demo" style="display:none">
+      <div class="container">
+        <div class="demo-grid">
+
+          <!-- Left: info -->
+          <div class="demo-info reveal">
+            <span class="eyebrow">Book a Demo</span>
+            <h3>See CareOpsX in action — free 20-min walkthrough</h3>
+            <p>We'll tailor the session to your clinic's specialty and size. No slides, just live software.</p>
+
+            <ul class="demo-bullets">
+              <li>Full platform walkthrough built around your workflow</li>
+              <li>Live Q&amp;A with a product specialist</li>
+              <li>Migration and onboarding guidance</li>
+              <li>Transparent pricing — no hidden fees</li>
+            </ul>
+
+            <div class="demo-stats">
+              <div class="demo-stat">
+                <div class="demo-stat-icon">⚡</div>
+                <strong>20 min</strong>
+                <small>avg demo length</small>
+              </div>
+              <div class="demo-stat">
+                <div class="demo-stat-icon">🗓️</div>
+                <strong>Same day</strong>
+                <small>scheduling</small>
+              </div>
+              <div class="demo-stat">
+                <div class="demo-stat-icon">🆓</div>
+                <strong>Free</strong>
+                <small>no commitment</small>
+              </div>
+            </div>
+          </div>
+
+          <!-- Right: form -->
+          <div class="demo-form-card reveal">
+            <h3 style="font-family:var(--font-display);font-size:1.25rem;font-weight:800;color:var(--ink);margin:0 0 6px">Request Your Demo</h3>
+            <p style="color:var(--muted);font-size:.9rem;margin:0 0 22px">We'll confirm within 2 business hours.</p>
+
+            <form id="demoBookForm" novalidate>
+              <div class="demo-form-grid">
+                <div class="demo-field">
+                  <label for="demoName">Full Name <em>*</em></label>
+                  <input type="text" id="demoName" placeholder="Dr. Priya Rao" required />
+                </div>
+                <div class="demo-field">
+                  <label for="demoPhone">Phone <em>*</em></label>
+                  <input type="tel" id="demoPhone" placeholder="+91 98765 43210" required />
+                </div>
+                <div class="demo-field full">
+                  <label for="demoEmail">Email <em>*</em></label>
+                  <input type="email" id="demoEmail" placeholder="you@hospital.com" required />
+                </div>
+                <div class="demo-field">
+                  <label for="demoClinic">Clinic / Hospital Name</label>
+                  <input type="text" id="demoClinic" placeholder="City Care Hospital" />
+                </div>
+                <div class="demo-field">
+                  <label for="demoSize">Clinic Size</label>
+                  <select id="demoSize">
+                    <option value="">Select size</option>
+                    <option>Solo practitioner</option>
+                    <option>2–5 doctors</option>
+                    <option>6–20 doctors</option>
+                    <option>20+ doctors</option>
+                  </select>
+                </div>
+                <div class="demo-field full">
+                  <label for="demoMsg">What would you like to see? <em>(optional)</em></label>
+                  <textarea id="demoMsg" placeholder="e.g. Queue management, billing, lab integration…"></textarea>
+                </div>
+              </div>
+
+              <button type="submit" class="btn btn-teal" style="width:100%;justify-content:center;padding:13px;font-size:1rem;margin-top:4px">
+                Book Free Demo →
+              </button>
+              <p id="demoBookStatus" style="margin-top:10px;font-size:.88rem;min-height:18px;text-align:center"></p>
+            </form>
+          </div>
+
+        </div>
+      </div>
+    </section>
+
     <section class="ctaBlock">
       <div class="container reveal">
         <span class="eyebrow" style="background:rgba(255,255,255,.12);color:#fff;border-color:rgba(255,255,255,.18)">Get
@@ -3313,6 +3400,113 @@
         status.className = 'form-status err';
       }
     });
+    /* ============= Book a Demo Form ============= */
+    document.getElementById('demoBookForm').addEventListener('submit', async function(e) {
+      e.preventDefault();
+      const status = document.getElementById('demoBookStatus');
+      const btn = this.querySelector('button[type="submit"]');
+      const orig = btn.textContent;
+      btn.textContent = 'Sending…'; btn.disabled = true;
+      status.textContent = ''; status.style.color = 'var(--muted)';
+
+      const payload = {
+        name:    document.getElementById('demoName').value.trim(),
+        phone:   document.getElementById('demoPhone').value.trim(),
+        email:   document.getElementById('demoEmail').value.trim(),
+        clinic:  document.getElementById('demoClinic').value.trim(),
+        size:    document.getElementById('demoSize').value,
+        message: document.getElementById('demoMsg').value.trim(),
+      };
+
+      if (!payload.name || !payload.phone || !payload.email) {
+        status.textContent = 'Please fill in Name, Phone, and Email.';
+        status.style.color = '#e74c3c';
+        btn.textContent = orig; btn.disabled = false;
+        return;
+      }
+
+      try {
+        // Send to backend contact endpoint or fallback mailto
+        const res = await fetch(`${API_BASE}/notifications/send`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            type: 'demo_request',
+            to: 'demo@careopsx.co.in',
+            subject: `Demo Request from ${payload.name}`,
+            body: `Name: ${payload.name}\nPhone: ${payload.phone}\nEmail: ${payload.email}\nClinic: ${payload.clinic}\nSize: ${payload.size}\nMessage: ${payload.message}`,
+          }),
+        }).catch(() => ({ ok: false }));
+
+        status.textContent = '✓ Request received! We\'ll confirm within 2 business hours.';
+        status.style.color = 'var(--teal-600)';
+        this.reset();
+      } catch {
+        // Fallback: open mailto
+        window.location.href = `mailto:demo@careopsx.co.in?subject=Demo Request from ${encodeURIComponent(payload.name)}&body=${encodeURIComponent(`Name: ${payload.name}\nPhone: ${payload.phone}\nEmail: ${payload.email}\nClinic: ${payload.clinic}`)}`;
+        status.textContent = 'Opening your email client…';
+        status.style.color = 'var(--teal-600)';
+      } finally {
+        btn.textContent = orig; btn.disabled = false;
+      }
+    });
+
+    /* ============= Razorpay ============= */
+    const API_BASE = window.location.hostname === 'localhost' ? 'http://localhost:5000' : 'https://care-opsx-api.vercel.app';
+    const RZ_KEY   = window.location.hostname === 'localhost' ? 'rzp_test_REPLACE_ME' : 'rzp_live_REPLACE_ME';
+
+    const PLAN_PRICES = { basic: 149900, premium: 299900 };
+    const PLAN_LABELS = { basic: 'Basic Plan', premium: 'Premium Plan' };
+
+    async function loadRzScript() {
+      if (window.Razorpay) return;
+      await new Promise((res, rej) => {
+        const s = document.createElement('script');
+        s.src = 'https://checkout.razorpay.com/v1/checkout.js';
+        s.onload = res; s.onerror = rej;
+        document.body.appendChild(s);
+      });
+    }
+
+    async function triggerRazorpay(plan) {
+      const token = localStorage.getItem('token');
+      if (!token) { openModal('register', plan); return; }
+      try {
+        await loadRzScript();
+        const r = await fetch(`${API_BASE}/billing/razorpay/create-order`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
+          body: JSON.stringify({ amount: PLAN_PRICES[plan], plan }),
+        });
+        const order = await r.json();
+        if (!r.ok) { alert(order.error || 'Could not create order'); return; }
+        const user = JSON.parse(localStorage.getItem('user') || '{}');
+        const rzp = new window.Razorpay({
+          key: RZ_KEY,
+          amount: order.amount, currency: order.currency || 'INR', order_id: order.order_id,
+          name: 'CareOpsX', description: PLAN_LABELS[plan],
+          prefill: { name: `${user.first_name || ''} ${user.last_name || ''}`.trim(), email: user.email || '' },
+          theme: { color: '#14b8a6' },
+          handler: async (response) => {
+            const vr = await fetch(`${API_BASE}/billing/razorpay/verify`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
+              body: JSON.stringify({ ...response, plan }),
+            });
+            const vd = await vr.json();
+            if (vr.ok) {
+              alert(`✓ Payment successful! ${PLAN_LABELS[plan]} is now active.`);
+              window.location.href = '/admin/dashboard';
+            } else {
+              alert(vd.error || 'Payment received but verification failed. Contact support.');
+            }
+          },
+        });
+        rzp.on('payment.failed', e => alert(`Payment failed: ${e.error.description}`));
+        rzp.open();
+      } catch (e) { alert(e.message || 'Payment failed. Please try again.'); }
+    }
+
     /* ============= Auth Modal ============= */
     const authModal = document.getElementById('authModal');
     const modalClose = document.getElementById('modalClose');
@@ -3378,7 +3572,7 @@
       btn.disabled = true;
 
       try {
-        const res = await fetch('https://care-opsx-api.vercel.app/auth/login', {
+        const res = await fetch('http://localhost:5000/auth/login', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ email, password: pass })
@@ -3428,7 +3622,7 @@
       btn.disabled = true;
 
       try {
-        const res = await fetch('https://care-opsx-api.vercel.app/auth/admin-register', {
+        const res = await fetch('http://localhost:5000/auth/admin-register', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ plan, email, display_name: name, org_name: org, phone, password: pass })

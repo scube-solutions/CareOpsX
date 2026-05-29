@@ -354,4 +354,68 @@ const getMyInvoices = async (req, res) => {
   }
 };
 
-module.exports = { getInvoices, getInvoiceById, createInvoice, recordPayment, processRefund, getPaymentRegister, getReceptionPayments, getMyInvoices };
+// ── Razorpay Subscription ────────────────────────────────────────────────────
+const createRazorpayOrder = async (req, res) => {
+  try {
+    if (!process.env.RAZORPAY_KEY_ID || !process.env.RAZORPAY_KEY_SECRET) {
+      return res.status(503).json({ error: 'Razorpay is not configured on this server. Add RAZORPAY_KEY_ID and RAZORPAY_KEY_SECRET to .env.' });
+    }
+    const Razorpay = require('razorpay');
+    const { amount, plan } = req.body;
+    if (!amount || !plan) return res.status(400).json({ error: 'amount and plan are required' });
+
+    const rz = new Razorpay({
+      key_id:     process.env.RAZORPAY_KEY_ID,
+      key_secret: process.env.RAZORPAY_KEY_SECRET,
+    });
+
+    const { organizationId } = await require('../utils/organizationAccess').getOrganizationContext(req);
+
+    const order = await rz.orders.create({
+      amount,
+      currency: 'INR',
+      receipt: `org_${organizationId}_${Date.now()}`,
+      notes: { plan, organization_id: String(organizationId) },
+    });
+
+    return res.json({ order_id: order.id, amount: order.amount, currency: order.currency });
+  } catch (err) {
+    console.error('Razorpay create-order error:', err.message);
+    return res.status(500).json({ error: err.message });
+  }
+};
+
+const verifyRazorpayPayment = async (req, res) => {
+  try {
+    const crypto = require('crypto');
+    const { razorpay_order_id, razorpay_payment_id, razorpay_signature, plan } = req.body;
+
+    if (!razorpay_order_id || !razorpay_payment_id || !razorpay_signature || !plan) {
+      return res.status(400).json({ error: 'Missing payment verification fields' });
+    }
+
+    const expected = crypto
+      .createHmac('sha256', process.env.RAZORPAY_KEY_SECRET)
+      .update(`${razorpay_order_id}|${razorpay_payment_id}`)
+      .digest('hex');
+
+    if (expected !== razorpay_signature) {
+      return res.status(400).json({ error: 'Payment signature verification failed' });
+    }
+
+    const supabase = require('../utils/supabase');
+    const { organizationId } = await require('../utils/organizationAccess').getOrganizationContext(req);
+
+    await supabase
+      .from('organizations')
+      .update({ billing_status: plan, payment_status: 'paid' })
+      .eq('id', organizationId);
+
+    return res.json({ success: true, message: 'Payment verified and plan upgraded' });
+  } catch (err) {
+    console.error('Razorpay verify error:', err.message);
+    return res.status(500).json({ error: err.message });
+  }
+};
+
+module.exports = { getInvoices, getInvoiceById, createInvoice, recordPayment, processRefund, getPaymentRegister, getReceptionPayments, getMyInvoices, createRazorpayOrder, verifyRazorpayPayment };
