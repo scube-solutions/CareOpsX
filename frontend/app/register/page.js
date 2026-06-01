@@ -6,6 +6,10 @@ export default function RegisterPage() {
   const [form, setForm] = useState({ first_name: '', last_name: '', email: '', phone: '', password: '', confirm_password: '' });
   const [error, setError]   = useState('');
   const [loading, setLoading] = useState(false);
+  const [step, setStep]     = useState('form'); // 'form' | 'otp'
+  const [otp, setOtp]       = useState('');
+  const [notice, setNotice] = useState('');
+  const [resending, setResending] = useState(false);
 
   const handle = e => setForm({ ...form, [e.target.name]: e.target.value });
 
@@ -18,6 +22,28 @@ export default function RegisterPage() {
     setLoading(true);
     try {
       const data = await api('/auth/register', { method: 'POST', body: JSON.stringify({ first_name, last_name, email, phone, password, role_id: 3 }) });
+      if (data.requires_verification) {
+        setStep('otp');
+        if (data.dev_otp) { setOtp(data.dev_otp); setNotice(`Email delivery unavailable. Your code: ${data.dev_otp}`); }
+        else setNotice(`We sent a 6-digit code to ${email}. Enter it below to activate your account.`);
+      } else if (data.token) {
+        localStorage.setItem('token', data.token);
+        localStorage.setItem('user', JSON.stringify(data.user));
+        window.location.href = '/patient/dashboard';
+      }
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const verify = async () => {
+    setError('');
+    if (!otp || otp.length < 4) { setError('Enter the OTP sent to your email'); return; }
+    setLoading(true);
+    try {
+      const data = await api('/auth/verify-otp', { method: 'POST', body: JSON.stringify({ email: form.email, otp, purpose: 'verification' }) });
       localStorage.setItem('token', data.token);
       localStorage.setItem('user', JSON.stringify(data.user));
       window.location.href = '/patient/dashboard';
@@ -25,6 +51,19 @@ export default function RegisterPage() {
       setError(err.message);
     } finally {
       setLoading(false);
+    }
+  };
+
+  const resend = async () => {
+    setError(''); setResending(true);
+    try {
+      const data = await api('/auth/send-otp', { method: 'POST', body: JSON.stringify({ email: form.email, purpose: 'verification' }) });
+      if (data.dev_otp) { setOtp(data.dev_otp); setNotice(`Email delivery unavailable. Your code: ${data.dev_otp}`); }
+      else setNotice('A new code has been sent to your email.');
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setResending(false);
     }
   };
 
@@ -45,6 +84,40 @@ export default function RegisterPage() {
         </div>
       </a>
 
+      {step === 'otp' ? (
+        <div style={s.card}>
+          <h1 style={s.title}>Verify Your Email</h1>
+          <p style={s.sub}>Enter the 6-digit code to activate your account.</p>
+
+          {notice && <div style={{ ...s.error, background: '#f0fdfb', border: '1px solid #99f6e4', color: '#0f766e' }}>{notice}</div>}
+          {error && <div style={s.error}>{error}</div>}
+
+          <div style={s.fg}>
+            <label style={s.label}>Verification Code</label>
+            <input
+              style={{ ...s.input, fontSize: '1.4rem', letterSpacing: '.5em', textAlign: 'center', fontWeight: 700 }}
+              value={otp}
+              onChange={e => setOtp(e.target.value.replace(/\D/g, '').slice(0, 6))}
+              placeholder="••••••"
+              inputMode="numeric"
+              maxLength={6}
+              onKeyDown={e => { if (e.key === 'Enter') verify(); }}
+            />
+          </div>
+
+          <button style={{ ...s.btn, opacity: loading ? .7 : 1 }} onClick={verify} disabled={loading}>
+            {loading ? 'Verifying…' : 'Verify & Continue →'}
+          </button>
+
+          <p style={s.switch}>
+            Didn&apos;t get the code?{' '}
+            <span onClick={resend} style={{ ...s.link, cursor: 'pointer' }}>{resending ? 'Sending…' : 'Resend Code'}</span>
+          </p>
+          <p style={s.switch}>
+            <span onClick={() => { setStep('form'); setOtp(''); setError(''); setNotice(''); }} style={{ ...s.link, cursor: 'pointer' }}>← Back to registration</span>
+          </p>
+        </div>
+      ) : (
       <div style={s.card}>
         <h1 style={s.title}>Create Patient Account</h1>
         <p style={s.sub}>Register to book appointments and view your health records</p>
@@ -91,6 +164,7 @@ export default function RegisterPage() {
           <a href="/login" style={s.link}>Sign In</a>
         </p>
       </div>
+      )}
     </div>
   );
 }

@@ -2905,7 +2905,7 @@
               <li><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round"
                   stroke-linejoin="round"><path d="M20 6 9 17l-5-5" /></svg> 1 clinic location</li>
             </ul>
-            <button class="btn btn-ghost" style="justify-content:center;width:100%" onclick="triggerRazorpay('basic')">Get Started</button>
+            <button class="btn btn-ghost" style="justify-content:center;width:100%" onclick="triggerRazorpay('basic', this)">Get Started</button>
           </div>
 
           <!-- PREMIUM -->
@@ -2938,7 +2938,7 @@
               <li><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round"
                   stroke-linejoin="round"><path d="M20 6 9 17l-5-5" /></svg> Complete operation management</li>
             </ul>
-            <button class="btn btn-teal" style="justify-content:center;width:100%" onclick="triggerRazorpay('premium')">Choose Premium</button>
+            <button class="btn btn-teal" style="justify-content:center;width:100%" onclick="triggerRazorpay('premium', this)">Choose Premium</button>
           </div>
 
           <!-- ENTERPRISE -->
@@ -3452,11 +3452,19 @@
     });
 
     /* ============= Razorpay ============= */
-    const API_BASE = window.location.hostname === 'localhost' ? 'http://localhost:5000' : 'https://care-opsx-api.vercel.app';
+    const API_BASE = window.location.hostname === 'localhost' ? 'http://localhost:5000' : 'https://care-opsx.vercel.app';
     const RZ_KEY   = window.location.hostname === 'localhost' ? 'rzp_test_REPLACE_ME' : 'rzp_live_REPLACE_ME';
 
-    const PLAN_PRICES = { basic: 149900, premium: 299900 };
     const PLAN_LABELS = { basic: 'Basic Plan', premium: 'Premium Plan' };
+    const GST_RATE = 0.18; // 18% GST
+
+    // Read the base monthly price (in rupees) from the pricing card the button lives in
+    function readPlanBasePrice(btnEl) {
+      const card = btnEl?.closest('.price');
+      const amountText = card?.querySelector('.amount')?.textContent || '';
+      const rupees = parseInt(amountText.replace(/[^0-9]/g, ''), 10);
+      return Number.isFinite(rupees) ? rupees : 0;
+    }
 
     async function loadRzScript() {
       if (window.Razorpay) return;
@@ -3468,15 +3476,25 @@
       });
     }
 
-    async function triggerRazorpay(plan) {
+    async function triggerRazorpay(plan, btnEl) {
       const token = localStorage.getItem('token');
       if (!token) { openModal('register', plan); return; }
+
+      // Derive price from the card shown on the page (not hardcoded)
+      const base = readPlanBasePrice(btnEl);
+      if (!base) { alert('Could not read plan price. Please refresh and try again.'); return; }
+      const gst   = Math.round(base * GST_RATE);
+      const total = base + gst;
+      const amountPaise = total * 100;
+
+      if (!confirm(`${PLAN_LABELS[plan]}\n\nBase: ₹${base.toLocaleString()}\nGST (18%): ₹${gst.toLocaleString()}\nTotal: ₹${total.toLocaleString()}\n\nProceed to payment?`)) return;
+
       try {
         await loadRzScript();
         const r = await fetch(`${API_BASE}/billing/razorpay/create-order`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
-          body: JSON.stringify({ amount: PLAN_PRICES[plan], plan }),
+          body: JSON.stringify({ amount: amountPaise, plan, base, gst, total }),
         });
         const order = await r.json();
         if (!r.ok) { alert(order.error || 'Could not create order'); return; }
@@ -3484,7 +3502,7 @@
         const rzp = new window.Razorpay({
           key: RZ_KEY,
           amount: order.amount, currency: order.currency || 'INR', order_id: order.order_id,
-          name: 'CareOpsX', description: PLAN_LABELS[plan],
+          name: 'CareOpsX', description: `${PLAN_LABELS[plan]} (incl. 18% GST)`,
           prefill: { name: `${user.first_name || ''} ${user.last_name || ''}`.trim(), email: user.email || '' },
           theme: { color: '#14b8a6' },
           handler: async (response) => {
@@ -3572,7 +3590,7 @@
       btn.disabled = true;
 
       try {
-        const res = await fetch('http://localhost:5000/auth/login', {
+        const res = await fetch(`${API_BASE}/auth/login`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ email, password: pass })
@@ -3580,6 +3598,10 @@
         const data = await res.json();
         if (!res.ok) {
           btn.textContent = orig; btn.disabled = false;
+          if (data.requires_verification) {
+            window.location.href = `/verify-email?email=${encodeURIComponent(data.email || email)}`;
+            return;
+          }
           alert(data.error || 'Login failed. Please check your credentials.');
           return;
         }
@@ -3615,6 +3637,11 @@
         else document.getElementById('regPassword').focus();
         return;
       }
+      if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+        alert('Please enter a valid email address.');
+        document.getElementById('regEmail').focus();
+        return;
+      }
 
       const btn = document.getElementById('registerSubmit');
       const originalText = btn.textContent;
@@ -3622,7 +3649,7 @@
       btn.disabled = true;
 
       try {
-        const res = await fetch('http://localhost:5000/auth/admin-register', {
+        const res = await fetch(`${API_BASE}/auth/admin-register`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ plan, email, display_name: name, org_name: org, phone, password: pass })
@@ -3634,10 +3661,14 @@
           alert(data.error || 'Registration failed. Please try again.');
           return;
         }
-        // Store token so user is logged in on the dashboard
-        if (data.token) localStorage.setItem('token', data.token);
-        // Success → redirect to admin dashboard
         closeModal();
+        // Require email verification before activation
+        if (data.requires_verification) {
+          if (data.dev_otp) alert(`Email delivery is unavailable. Your verification code is: ${data.dev_otp}`);
+          window.location.href = `/verify-email?email=${encodeURIComponent(data.email || email)}`;
+          return;
+        }
+        if (data.token) localStorage.setItem('token', data.token);
         window.location.href = '/admin/dashboard';
       } catch {
         btn.textContent = originalText;

@@ -38,7 +38,6 @@ async function loadRazorpayScript() {
 
 function SubscriptionTab() {
   const [billingInfo, setBillingInfo] = useState(null);
-  const [activePlanTab, setActivePlanTab] = useState(0);
   const [paying, setPaying] = useState(false);
 
   useEffect(() => {
@@ -66,23 +65,30 @@ function SubscriptionTab() {
 
   const fmt = (d) => d.toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' });
 
-  const PLAN_PRICES = { basic: 299900, professional: 599900, enterprise: null };
+  const GST_RATE = 0.18; // 18% GST
+  const PLAN_BASE = { basic: 1499, professional: 2999 }; // base monthly price (single source for display + charge)
 
-  const pay = async (planKey, planLabel) => {
+  const pay = async (planKey, planLabel, baseRupees) => {
     if (planKey === 'enterprise') { alert('Contact sales@careopsx.co.in for Enterprise pricing.'); return; }
+    if (!baseRupees) { alert('Could not read plan price.'); return; }
+
+    const gst   = Math.round(baseRupees * GST_RATE);
+    const total = baseRupees + gst;
+    if (!confirm(`${planLabel}\n\nBase: ₹${baseRupees.toLocaleString()}\nGST (18%): ₹${gst.toLocaleString()}\nTotal: ₹${total.toLocaleString()}\n\nProceed to payment?`)) return;
+
     setPaying(true);
     try {
       await loadRazorpayScript();
       const { order_id, amount, currency } = await api('/billing/razorpay/create-order', {
         method: 'POST',
-        body: JSON.stringify({ amount: PLAN_PRICES[planKey], plan: planKey }),
+        body: JSON.stringify({ amount: total * 100, plan: planKey, base: baseRupees, gst, total }),
       });
       const storedUser = JSON.parse(localStorage.getItem('user') || '{}');
       const rzp = new window.Razorpay({
         key: process.env.NEXT_PUBLIC_RAZORPAY_KEY_ID,
         amount, currency, order_id,
         name: 'CareOpsX',
-        description: `${planLabel} Subscription`,
+        description: `${planLabel} (incl. 18% GST)`,
         prefill: { name: `${storedUser.first_name || ''} ${storedUser.last_name || ''}`.trim(), email: storedUser.email || '' },
         theme: { color: '#00b4a0' },
         handler: async (response) => {
@@ -106,8 +112,6 @@ function SubscriptionTab() {
       setPaying(false);
     }
   };
-
-  const planTabs = Object.entries(PLANS).filter(([k]) => k !== 'trial');
 
   return (
     <div>
@@ -190,7 +194,7 @@ function SubscriptionTab() {
             <div style={{ fontWeight: 700, fontSize: 18, color: '#0f1f3d', marginBottom: 4 }}>Basic</div>
             <div style={{ fontSize: 12, color: '#64748b' }}>For solo practitioners &amp; small clinics</div>
           </div>
-          <div style={{ fontFamily: "'Bricolage Grotesque',sans-serif", fontSize: 36, fontWeight: 800, color: '#0f1f3d', lineHeight: 1 }}>₹1,499<span style={{ fontSize: 15, fontWeight: 500, color: '#64748b' }}>/month</span></div>
+          <div style={{ fontFamily: "'Bricolage Grotesque',sans-serif", fontSize: 36, fontWeight: 800, color: '#0f1f3d', lineHeight: 1 }}>₹{PLAN_BASE.basic.toLocaleString()}<span style={{ fontSize: 15, fontWeight: 500, color: '#64748b' }}>/month + GST</span></div>
           <ul style={{ listStyle: 'none', padding: 0, margin: 0, display: 'flex', flexDirection: 'column', gap: 8, flex: 1 }}>
             {['1 doctor + 4 users','Up to 100 patients','Appointment scheduling','Patient management','Basic reports','Email support','1 clinic location'].map(f => (
               <li key={f} style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, color: '#0f1f3d' }}>
@@ -198,7 +202,7 @@ function SubscriptionTab() {
               </li>
             ))}
           </ul>
-          <button onClick={() => pay('basic', 'Basic Plan')} disabled={paying} style={{ width: '100%', padding: '12px', border: '1.5px solid #e2e8f0', borderRadius: 10, background: '#fff', color: '#0f1f3d', fontWeight: 700, fontSize: 14, cursor: paying ? 'default' : 'pointer', opacity: paying ? .7 : 1 }}>
+          <button onClick={() => pay('basic', 'Basic Plan', PLAN_BASE.basic)} disabled={paying} style={{ width: '100%', padding: '12px', border: '1.5px solid #e2e8f0', borderRadius: 10, background: '#fff', color: '#0f1f3d', fontWeight: 700, fontSize: 14, cursor: paying ? 'default' : 'pointer', opacity: paying ? .7 : 1 }}>
             {paying ? 'Processing…' : 'Get Started'}
           </button>
         </div>
@@ -210,7 +214,7 @@ function SubscriptionTab() {
             <div style={{ fontWeight: 700, fontSize: 18, color: '#fff', marginBottom: 4 }}>Premium</div>
             <div style={{ fontSize: 12, color: '#94a3b8' }}>For growing practices</div>
           </div>
-          <div style={{ fontFamily: "'Bricolage Grotesque',sans-serif", fontSize: 36, fontWeight: 800, color: '#fff', lineHeight: 1 }}>₹2,999<span style={{ fontSize: 15, fontWeight: 500, color: '#94a3b8' }}>/month</span></div>
+          <div style={{ fontFamily: "'Bricolage Grotesque',sans-serif", fontSize: 36, fontWeight: 800, color: '#fff', lineHeight: 1 }}>₹{PLAN_BASE.professional.toLocaleString()}<span style={{ fontSize: 15, fontWeight: 500, color: '#94a3b8' }}>/month + GST</span></div>
           <ul style={{ listStyle: 'none', padding: 0, margin: 0, display: 'flex', flexDirection: 'column', gap: 8, flex: 1 }}>
             {['Everything in Basic','Up to 5 doctors + 20 users','Unlimited patients','Multi-clinic management (up to 5)','Advanced analytics','Exercise prescriptions','Staff management','OPD & IPD management','Priority support','Complete operation management'].map(f => (
               <li key={f} style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, color: '#cbd5e1' }}>
@@ -218,7 +222,7 @@ function SubscriptionTab() {
               </li>
             ))}
           </ul>
-          <button onClick={() => pay('professional', 'Premium Plan')} disabled={paying} style={{ width: '100%', padding: '12px', border: 'none', borderRadius: 10, background: '#00b4a0', color: '#fff', fontWeight: 700, fontSize: 14, cursor: paying ? 'default' : 'pointer', opacity: paying ? .7 : 1, boxShadow: '0 6px 20px rgba(0,180,160,.4)' }}>
+          <button onClick={() => pay('professional', 'Premium Plan', PLAN_BASE.professional)} disabled={paying} style={{ width: '100%', padding: '12px', border: 'none', borderRadius: 10, background: '#00b4a0', color: '#fff', fontWeight: 700, fontSize: 14, cursor: paying ? 'default' : 'pointer', opacity: paying ? .7 : 1, boxShadow: '0 6px 20px rgba(0,180,160,.4)' }}>
             {paying ? 'Processing…' : 'Choose Premium'}
           </button>
         </div>
@@ -302,6 +306,34 @@ export default function SetupPage() {
   const [specializations, setSpecializations] = useState([]);
   const [specName, setSpecName] = useState('');
   const [apptBlockUser, setApptBlockUser] = useState(null);
+  const [selectedUsers, setSelectedUsers] = useState([]);
+
+  const toggleSelectUser = (id) => setSelectedUsers(prev => prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id]);
+
+  const deleteOneUser = async (u) => {
+    if (!confirm(`Delete ${u.first_name} ${u.last_name}? This cannot be undone.`)) return;
+    try {
+      await api(`/admin/users/${u.id}`, { method: 'DELETE' });
+      setMsg(`User ${u.first_name} ${u.last_name} deleted`);
+      setSelectedUsers(prev => prev.filter(x => x !== u.id));
+      await loadAll();
+    } catch (e) {
+      if (e.data?.appointments) setApptBlockUser({ user: u });
+      else setMsg(e.message);
+    }
+  };
+
+  const bulkDelete = async () => {
+    if (selectedUsers.length === 0) return;
+    if (!confirm(`Delete ${selectedUsers.length} selected user(s)? This cannot be undone.`)) return;
+    try {
+      const res = await api('/admin/users/bulk-delete', { method: 'POST', body: JSON.stringify({ ids: selectedUsers }) });
+      const skippedNote = res.skipped?.length ? ` (${res.skipped.length} skipped)` : '';
+      setMsg(`${res.deleted?.length || 0} user(s) deleted${skippedNote}`);
+      setSelectedUsers([]);
+      await loadAll();
+    } catch (e) { setMsg(e.message); }
+  };
 
   const loadAll = async () => {
     try {
@@ -702,14 +734,44 @@ export default function SetupPage() {
               </div>
             </div>
           )}
+          {selectedUsers.length > 0 && (
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', background: '#fef2f2', border: '1px solid #fecaca', borderRadius: 10, padding: '10px 16px', marginBottom: 12 }}>
+              <span style={{ fontSize: 13, fontWeight: 600, color: '#991b1b' }}>{selectedUsers.length} user(s) selected</span>
+              <div style={{ display: 'flex', gap: 8 }}>
+                <button onClick={() => setSelectedUsers([])} style={s.btnSec}>Clear</button>
+                <button onClick={bulkDelete} style={{ ...s.btnPri, background: '#dc2626' }}>Delete Selected</button>
+              </div>
+            </div>
+          )}
           <div style={s.card}>
             <table style={s.table}>
-              <thead><tr>{['Name', 'Email', 'Role(s)', 'Status', 'Actions'].map(h => <th key={h} style={s.th}>{h}</th>)}</tr></thead>
+              <thead><tr>
+                <th style={{ ...s.th, width: 36 }}>
+                  <input
+                    type="checkbox"
+                    checked={users.length > 0 && selectedUsers.length === users.filter(u => u.role_id !== 1).length}
+                    onChange={e => setSelectedUsers(e.target.checked ? users.filter(u => u.role_id !== 1).map(u => u.id) : [])}
+                    style={{ accentColor: '#00b4a0', cursor: 'pointer' }}
+                  />
+                </th>
+                {['Name', 'Email', 'Role(s)', 'Status', 'Actions'].map(h => <th key={h} style={s.th}>{h}</th>)}
+              </tr></thead>
               <tbody>
                 {users.map(u => {
                   const userRoles = Array.isArray(u.roles) && u.roles.length ? u.roles : [u.role_id].filter(Boolean);
+                  const isAdmin = u.role_id === 1;
                   return (
-                    <tr key={u.id}>
+                    <tr key={u.id} style={selectedUsers.includes(u.id) ? { background: '#fef2f2' } : undefined}>
+                      <td style={s.td}>
+                        <input
+                          type="checkbox"
+                          checked={selectedUsers.includes(u.id)}
+                          disabled={isAdmin}
+                          onChange={() => toggleSelectUser(u.id)}
+                          style={{ accentColor: '#00b4a0', cursor: isAdmin ? 'not-allowed' : 'pointer' }}
+                          title={isAdmin ? 'Admin accounts cannot be deleted' : ''}
+                        />
+                      </td>
                       <td style={s.td}><strong>{u.first_name} {u.last_name}</strong></td>
                       <td style={s.td}>{u.email}</td>
                       <td style={s.td}>
@@ -732,6 +794,9 @@ export default function SetupPage() {
                           setForm({ ...u, password: '', roles: Array.isArray(u.roles) && u.roles.length ? u.roles : [u.role_id].filter(Boolean) });
                           setShowForm(true);
                         }} style={s.actBtn}>Edit</button>
+                        {!isAdmin && (
+                          <button onClick={() => deleteOneUser(u)} style={{ ...s.actBtn, marginLeft: 6, color: '#dc2626', borderColor: '#fecaca' }}>Delete</button>
+                        )}
                       </td>
                     </tr>
                   );
