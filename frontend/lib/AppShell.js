@@ -299,10 +299,39 @@ function SidebarContent({ groups, currentRole, onNavigate, collapsed = false }) 
   );
 }
 
+const INACTIVITY_MS = 30 * 60 * 1000; // 30 minutes
+
 export default function AppShell({ title, roleLabel, currentRole, groups, user, children, collapsibleDesktop = false, defaultCollapsed = false, settingsHref }) {
   const router = useRouter();
   const [desktopCollapsed, setDesktopCollapsed] = useState(defaultCollapsed);
   const [mobileOpen, setMobileOpen] = useState(false);
+  const [showWarning, setShowWarning] = useState(false);
+  const inactivityTimer = useRef(null);
+  const warningTimer = useRef(null);
+
+  useEffect(() => {
+    const resetTimer = () => {
+      clearTimeout(inactivityTimer.current);
+      clearTimeout(warningTimer.current);
+      setShowWarning(false);
+      // warn 2 min before logout
+      warningTimer.current = setTimeout(() => setShowWarning(true), INACTIVITY_MS - 2 * 60 * 1000);
+      inactivityTimer.current = setTimeout(() => {
+        clearAuth();
+        window.location.href = '/login?reason=inactivity';
+      }, INACTIVITY_MS);
+    };
+
+    const events = ['mousemove', 'keydown', 'click', 'scroll', 'touchstart'];
+    events.forEach(e => window.addEventListener(e, resetTimer, { passive: true }));
+    resetTimer();
+
+    return () => {
+      events.forEach(e => window.removeEventListener(e, resetTimer));
+      clearTimeout(inactivityTimer.current);
+      clearTimeout(warningTimer.current);
+    };
+  }, []);
 
   useEffect(() => {
     const closeOnResize = () => { if (window.innerWidth > 1024) setMobileOpen(false); };
@@ -312,6 +341,12 @@ export default function AppShell({ title, roleLabel, currentRole, groups, user, 
 
   return (
     <div className="app-shell" style={{ fontFamily: theme.body }}>
+      {showWarning && (
+        <div style={{ position: 'fixed', top: 16, left: '50%', transform: 'translateX(-50%)', zIndex: 9999, background: '#fff', border: '1px solid #fde68a', borderLeft: '4px solid #f59e0b', borderRadius: 10, padding: '12px 18px', boxShadow: '0 8px 32px rgba(15,31,61,.15)', display: 'flex', alignItems: 'center', gap: 14, maxWidth: 420 }}>
+          <span style={{ fontSize: 13, color: '#0f1f3d' }}>Session expiring soon due to inactivity.</span>
+          <button onClick={() => setShowWarning(false)} style={{ padding: '6px 14px', background: theme.teal, color: '#fff', border: 'none', borderRadius: 7, fontSize: 12, fontWeight: 600, cursor: 'pointer', whiteSpace: 'nowrap' }}>Stay signed in</button>
+        </div>
+      )}
       <div className="app-shell-sidebar-desktop">
         <div style={{ position: 'sticky', top: 0, height: '100vh' }}>
           {collapsibleDesktop ? (

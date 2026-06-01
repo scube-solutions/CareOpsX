@@ -311,8 +311,7 @@ const toggleUserActive = async (req, res) => {
   }
 };
 
-const cascadeDeleteDoctor = async (doctorId) => {
-  const sb = supabase;
+const cascadeDeleteDoctor = async (doctorId, sb) => {
   const { data: appts } = await sb.from('appointments').select('id').eq('doctor_id', doctorId);
   const apptIds = (appts || []).map(a => a.id);
   const { data: labOrders } = await sb.from('lab_orders').select('id').eq('doctor_id', doctorId);
@@ -365,13 +364,51 @@ const deleteUser = async (req, res) => {
           }));
           return res.status(409).json({ error: 'Doctor has active appointments', appointments });
         }
-        await cascadeDeleteDoctor(doctor.id);
+        await cascadeDeleteDoctor(doctor.id, supabase);
       }
     }
     const { error } = await supabase.from('users').delete().eq('id', id).eq('organization_id', organizationId);
     if (error) throw error;
     await auditLog({ user_id: req.user.id, role_id: req.user.role_id, action: 'DELETE_USER', module: 'Admin', entity_type: 'user', entity_id: id });
     return res.json({ message: `User ${user.first_name} ${user.last_name} deleted` });
+  } catch (err) {
+    return res.status(500).json({ error: err.message });
+  }
+};
+
+const bulkDeleteUsers = async (req, res) => {
+  try {
+    const supabase = req.db;
+    const { organizationId } = await getOrganizationContext(req);
+    const { ids } = req.body;
+    if (!Array.isArray(ids) || ids.length === 0) return res.status(400).json({ error: 'ids array is required' });
+
+    const deleted = [];
+    const skipped = [];
+
+    for (const id of ids) {
+      if (id === req.user.id) { skipped.push({ id, reason: 'own account' }); continue; }
+      const { data: user } = await supabase.from('users').select('id, first_name, last_name, role_id').eq('id', id).eq('organization_id', organizationId).single();
+      if (!user) { skipped.push({ id, reason: 'not found' }); continue; }
+      if (user.role_id === 1) { skipped.push({ id, reason: 'admin account' }); continue; }
+
+      // Doctor with active appointments → skip
+      if (user.role_id === 2) {
+        const { data: doctor } = await supabase.from('doctors').select('id').eq('user_id', id).single();
+        if (doctor) {
+          const { data: appts } = await supabase.from('appointments').select('id').eq('doctor_id', doctor.id).not('status', 'in', '("cancelled","completed")');
+          if (appts && appts.length > 0) { skipped.push({ id, reason: 'doctor has active appointments' }); continue; }
+          await cascadeDeleteDoctor(doctor.id, supabase);
+        }
+      }
+
+      const { error } = await supabase.from('users').delete().eq('id', id).eq('organization_id', organizationId);
+      if (error) { skipped.push({ id, reason: error.message }); continue; }
+      deleted.push(id);
+      await auditLog({ user_id: req.user.id, role_id: req.user.role_id, action: 'DELETE_USER', module: 'Admin', entity_type: 'user', entity_id: id });
+    }
+
+    return res.json({ message: `${deleted.length} user(s) deleted`, deleted, skipped });
   } catch (err) {
     return res.status(500).json({ error: err.message });
   }
@@ -544,7 +581,7 @@ module.exports = {
   getDepartments, createDepartment, updateDepartment, toggleDepartment,
   getConsultationTypes, createConsultationType, updateConsultationType,
   getDoctorLeaves, createDoctorLeave, deleteDoctorLeave,
-  getUsers, createUser, updateUser, toggleUserActive, deleteUser, resetUserPassword,
+  getUsers, createUser, updateUser, toggleUserActive, deleteUser, bulkDeleteUsers, resetUserPassword,
   getLabTestCatalog, createLabTest, updateLabTest, deleteLabTest,
   getSpecializations, createSpecialization, toggleSpecialization, deleteSpecialization,
   getRooms, createRoom, updateRoom, deleteRoom,

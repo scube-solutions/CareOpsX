@@ -1,12 +1,18 @@
 'use client';
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import Link from 'next/link';
 import { api }      from '@/lib/api';
 
 export default function LoginPage() {
   const [form, setForm]     = useState({ email: '', password: '' });
   const [error, setError]   = useState('');
+  const [notice, setNotice] = useState('');
   const [loading, setLoading] = useState(false);
+
+  useEffect(() => {
+    const reason = new URLSearchParams(window.location.search).get('reason');
+    if (reason === 'inactivity') setNotice('You were signed out due to inactivity. Please sign in again.');
+  }, []);
 
   const handle = (e) => setForm({ ...form, [e.target.name]: e.target.value });
 
@@ -40,6 +46,10 @@ export default function LoginPage() {
       window.location.href = routes[data.user.role_id] || '/login';
 
     } catch (err) {
+      if (err.data?.requires_verification) {
+        window.location.href = `/verify-email?email=${encodeURIComponent(err.data.email || form.email)}`;
+        return;
+      }
       setError(err.message);
     } finally {
       setLoading(false);
@@ -74,7 +84,8 @@ export default function LoginPage() {
         <h1 style={styles.title}>Welcome back</h1>
         <p style={styles.sub}>Sign in to your CareOpsX account</p>
 
-        {/* Error */}
+        {/* Notice / Error */}
+        {notice && <div style={{ ...styles.error, background:'#fffbeb', border:'1px solid #fde68a', color:'#92400e' }}>{notice}</div>}
         {error && <div style={styles.error}>{error}</div>}
 
         {/* Fields */}

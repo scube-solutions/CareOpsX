@@ -208,15 +208,59 @@ SUPABASE_URL=your_supabase_url
 SUPABASE_ANON_KEY=your_supabase_anon_key
 
 FAST2SMS_API_KEY=your_fast2sms_key
+
+# ── Email delivery (choose ONE: SMTP preferred, else SendGrid) ──
+# Option A — SMTP (e.g. Gmail). Takes priority if SMTP_HOST/USER/PASS are all set.
+SMTP_HOST=smtp.gmail.com
+SMTP_PORT=587
+SMTP_USER=your_gmail_address@gmail.com
+SMTP_PASS=your_16_char_app_password
+SMTP_FROM=your_gmail_address@gmail.com
+
+# Option B — SendGrid (used only if SMTP is not configured)
 SENDGRID_API_KEY=your_sendgrid_key
 SENDGRID_FROM_EMAIL=noreply@careopsx.co.in
+
+# Razorpay (subscription payments)
+RAZORPAY_KEY_ID=rzp_test_or_live_key
+RAZORPAY_KEY_SECRET=your_razorpay_secret
 ```
 
-Notes:
+### Email Setup (OTP & notifications)
+
+The app sends OTP verification and notification emails. It picks a provider in this order:
+
+1. **SMTP** — if `SMTP_HOST`, `SMTP_USER`, and `SMTP_PASS` are all set (recommended; works with Gmail).
+2. **SendGrid** — if SMTP is not set but `SENDGRID_API_KEY` is.
+3. **Dry-run** — if neither is set, the OTP/email is logged to the backend console (and the OTP is returned in the API response in non-production so you can still test).
+
+**Gmail SMTP setup (recommended):**
+
+1. Enable 2-Step Verification on your Google account.
+2. Go to Google Account → Security → **App passwords** → generate one for "Mail".
+3. Copy the 16-character app password (no spaces).
+4. In `backend/.env`:
+   ```env
+   SMTP_HOST=smtp.gmail.com
+   SMTP_PORT=587
+   SMTP_USER=your_gmail_address@gmail.com
+   SMTP_PASS=the_16_char_app_password
+   SMTP_FROM=your_gmail_address@gmail.com
+   ```
+5. Restart the backend. OTP emails now send via Gmail.
+
+> Note: a regular Gmail password will NOT work — you must use an **App Password**.
+
+**SendGrid setup (alternative):**
+
+- `SENDGRID_API_KEY` must start with `SG.` and be ~69 characters (create one under Settings → API Keys with Mail Send permission).
+- The `SENDGRID_FROM_EMAIL` address must be a **verified sender** (Settings → Sender Authentication), otherwise sends are rejected.
+
+Other notes:
 
 - `FAST2SMS_API_KEY` is used for SMS notifications.
-- `SENDGRID_API_KEY` and `SENDGRID_FROM_EMAIL` are used for email delivery.
-- If notification keys are missing, parts of the notification utility fall back to dry-run logging instead of sending.
+- `RAZORPAY_KEY_ID` / `RAZORPAY_KEY_SECRET` power subscription payments. The frontend also needs `NEXT_PUBLIC_RAZORPAY_KEY_ID` (the same Key ID).
+- If notification keys are missing, the notification utility falls back to dry-run logging instead of sending.
 
 ### Frontend
 

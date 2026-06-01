@@ -1,8 +1,25 @@
 const https = require('https');
+const nodemailer = require('nodemailer');
 
 const fast2smsKey = process.env.FAST2SMS_API_KEY;
 const sendgridKey = process.env.SENDGRID_API_KEY;
 const sendgridFrom = process.env.SENDGRID_FROM_EMAIL || 'noreply@careopsx.co.in';
+
+// ── SMTP transport (Gmail / any SMTP) ─────────────────────────────────────────
+const smtpHost = process.env.SMTP_HOST;
+const smtpUser = process.env.SMTP_USER;
+const smtpPass = process.env.SMTP_PASS;
+const smtpFrom = process.env.SMTP_FROM || smtpUser;
+
+let smtpTransport = null;
+if (smtpHost && smtpUser && smtpPass) {
+  smtpTransport = nodemailer.createTransport({
+    host: smtpHost,
+    port: Number(process.env.SMTP_PORT) || 587,
+    secure: Number(process.env.SMTP_PORT) === 465, // true for 465, false for 587
+    auth: { user: smtpUser, pass: smtpPass },
+  });
+}
 
 const postJson = (hostname, path, headers, body) => {
   return new Promise((resolve, reject) => {
@@ -65,24 +82,30 @@ const sendSms = async (phone, message) => {
 const sendEmail = async (email, subject, text) => {
   if (!email) return;
 
-  if (!sendgridKey) {
-    console.log('[notify][dry-run][email]', { to: email, subject, text });
+  // 1. Prefer SMTP if configured
+  if (smtpTransport) {
+    await smtpTransport.sendMail({ from: smtpFrom, to: email, subject, text });
     return;
   }
 
-  await postJson(
-    'api.sendgrid.com',
-    '/v3/mail/send',
-    {
-      Authorization: `Bearer ${sendgridKey}`,
-    },
-    {
-      personalizations: [{ to: [{ email }] }],
-      from: { email: sendgridFrom },
-      subject,
-      content: [{ type: 'text/plain', value: text }],
-    }
-  );
+  // 2. Fall back to SendGrid API
+  if (sendgridKey) {
+    await postJson(
+      'api.sendgrid.com',
+      '/v3/mail/send',
+      { Authorization: `Bearer ${sendgridKey}` },
+      {
+        personalizations: [{ to: [{ email }] }],
+        from: { email: sendgridFrom },
+        subject,
+        content: [{ type: 'text/plain', value: text }],
+      }
+    );
+    return;
+  }
+
+  // 3. No provider configured → dry-run log
+  console.log('[notify][dry-run][email]', { to: email, subject, text });
 };
 
 const fireAndForget = async (tasks, label) => {
@@ -159,6 +182,24 @@ const sendPasswordResetEmail = async (email, name, resetUrl) => {
   await sendEmail(email, subject, text);
 };
 
+const sendOtpEmail = async (email, name, otp, purpose = 'verification') => {
+  const subjects = {
+    verification: 'Verify your CareOpsX account',
+    reset:        'Your CareOpsX password reset code',
+    login:        'Your CareOpsX login code',
+  };
+  const subject = subjects[purpose] || subjects.verification;
+  const text = `Hi ${name || 'there'},\n\nYour CareOpsX ${purpose} code is:\n\n    ${otp}\n\nThis code is valid for 10 minutes. Do not share it with anyone.\n\nIf you did not request this, please ignore this email.\n\nCareOpsX Team`;
+  // Non-fatal: email delivery failure must not break registration/verification flows
+  try {
+    await sendEmail(email, subject, text);
+    return true;
+  } catch (err) {
+    console.warn('[notify] sendOtpEmail failed:', err.message);
+    return false;
+  }
+};
+
 const notifyOrgOnboarded = async ({
   adminEmail, adminName, orgName, orgCode,
   loginUrl, portals, password,
@@ -199,5 +240,6 @@ module.exports = {
   notifyBookingCancelled,
   notifyAppointmentReminder,
   sendPasswordResetEmail,
+  sendOtpEmail,
   notifyOrgOnboarded,
 };

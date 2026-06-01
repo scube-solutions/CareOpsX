@@ -33,6 +33,7 @@ router.delete('/doctor-leaves/:id', ...adminOnly, ctrl.deleteDoctorLeave);
 // Users management
 router.get('/users', ...adminOnly, ctrl.getUsers);
 router.post('/users', ...adminOnly, ctrl.createUser);
+router.post('/users/bulk-delete', ...adminOnly, ctrl.bulkDeleteUsers);
 router.put('/users/:id', ...adminOnly, ctrl.updateUser);
 router.patch('/users/:id/toggle', ...adminOnly, ctrl.toggleUserActive);
 router.delete('/users/:id', ...adminOnly, ctrl.deleteUser);

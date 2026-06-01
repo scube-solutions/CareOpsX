@@ -19,6 +19,11 @@ export const api = async (endpoint, options = {}) => {
   } catch {
     throw new Error(res.ok ? 'Invalid server response' : `Server error ${res.status}: endpoint may not exist or server is unreachable`);
   }
-  if (!res.ok) throw new Error(data.error || data.message || 'Something went wrong');
+  if (!res.ok) {
+    const err = new Error(data.error || data.message || 'Something went wrong');
+    err.data = data;
+    err.status = res.status;
+    throw err;
+  }
   return data;
 };
