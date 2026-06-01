@@ -24,6 +24,7 @@ export default function AdminDoctorsPage() {
   const [showAddModal, setShowAddModal] = useState(false);
   const [savingDoctor, setSavingDoctor] = useState(false);
   const [formError, setFormError] = useState('');
+  const [fieldErrors, setFieldErrors] = useState({});
   const [form, setForm] = useState(initialDoctorForm);
   const [deleteConfirm, setDeleteConfirm] = useState(null);
   const [deletingId, setDeletingId] = useState(null);
@@ -74,10 +75,24 @@ export default function AdminDoctorsPage() {
   const onCreateDoctor = async (e) => {
     e.preventDefault();
     setFormError('');
+
+    // Inline per-field validation
+    const errs = {};
+    if (!form.first_name?.trim()) errs.first_name = 'First name is required';
+    if (!form.last_name?.trim())  errs.last_name  = 'Last name is required';
+    if (!form.email?.trim())      errs.email      = 'Email is required';
+    else if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(form.email)) errs.email = 'Enter a valid email';
+    if (!form.password?.trim())   errs.password   = 'Password is required';
+    if (!form.specialization?.trim()) errs.specialization = 'Specialization is required';
+    if (form.consultation_fee === '' || form.consultation_fee == null) errs.consultation_fee = 'Fee is required';
+    else if (isNaN(Number(form.consultation_fee))) errs.consultation_fee = 'Fee must be a number';
+    if (Object.keys(errs).length) { setFieldErrors(errs); return; }
+    setFieldErrors({});
     setSavingDoctor(true);
 
     try {
-      const registerRes = await api('/auth/register', {
+      // Single admin call — creates the user AND auto-creates the doctor profile
+      await api('/admin/users', {
         method: 'POST',
         body: JSON.stringify({
           first_name: form.first_name.trim(),
@@ -86,19 +101,10 @@ export default function AdminDoctorsPage() {
           phone: form.phone.trim() || null,
           password: form.password,
           role_id: 2,
-        }),
-      });
-
-      const userId = registerRes?.user?.id;
-      if (!userId) throw new Error('Doctor user account was created but user ID is missing');
-
-      await api('/doctors', {
-        method: 'POST',
-        body: JSON.stringify({
-          user_id: userId,
+          roles: [2],
           specialization: form.specialization.trim(),
           consultation_fee: Number(form.consultation_fee),
-          experience: form.experience ? Number(form.experience) : null,
+          experience_years: form.experience ? Number(form.experience) : null,
         }),
       });
 
@@ -106,7 +112,10 @@ export default function AdminDoctorsPage() {
       setForm(initialDoctorForm);
       await loadDoctors();
     } catch (err) {
-      setFormError(err.message || 'Could not create doctor');
+      const m = (err.message || '').toLowerCase();
+      if (m.includes('email')) setFieldErrors({ email: err.message });
+      else if (m.includes('password')) setFieldErrors({ password: err.message });
+      else setFormError(err.message || 'Could not create doctor');
     } finally {
       setSavingDoctor(false);
     }
@@ -340,7 +349,7 @@ export default function AdminDoctorsPage() {
         <div style={{ position: 'fixed', inset: 0, background: 'rgba(15,23,42,.36)', display: 'grid', placeItems: 'center', zIndex: 30 }}>
           <form onSubmit={onCreateDoctor} style={{ width: 'min(720px, 95vw)', background: T.card, borderRadius: 12, border: `1px solid ${T.border}`, padding: 16 }}>
             <h3 style={{ margin: 0, fontFamily: T.display, color: T.navy, fontSize: 21 }}>Add Doctor</h3>
-            <p style={{ margin: '5px 0 12px', color: T.muted, fontSize: 13 }}>Step 1: create user (role 2). Step 2: attach doctor profile.</p>
+            <p style={{ margin: '5px 0 12px', color: T.muted, fontSize: 13 }}>Creates the doctor account and profile in one step.</p>
 
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: 10 }}>
               {[
@@ -354,31 +363,31 @@ export default function AdminDoctorsPage() {
                 ['experience', 'Experience (years)', 'number'],
               ].map(([key, label, type]) => (
                 <div key={key}>
-                  <label style={{ display: 'block', fontSize: 12, color: T.muted, marginBottom: 4 }}>{label}</label>
+                  <label style={{ display: 'block', fontSize: 12, color: T.muted, marginBottom: 4 }}>{label}{['first_name', 'last_name', 'email', 'password', 'consultation_fee'].includes(key) ? ' *' : ''}</label>
                   <input
                     type={type}
-                    required={['first_name', 'last_name', 'email', 'password', 'consultation_fee'].includes(key)}
                     min={type === 'number' ? 0 : undefined}
                     value={form[key]}
-                    onChange={(e) => setForm((prev) => ({ ...prev, [key]: e.target.value }))}
-                    style={{ width: '100%', border: `1px solid ${T.border}`, borderRadius: 8, padding: '9px 10px', fontFamily: T.body }}
+                    onChange={(e) => { setForm((prev) => ({ ...prev, [key]: e.target.value })); if (fieldErrors[key]) setFieldErrors((p) => ({ ...p, [key]: '' })); }}
+                    style={{ width: '100%', border: `1px solid ${fieldErrors[key] ? '#ef4444' : T.border}`, background: fieldErrors[key] ? '#fef2f2' : '#fff', borderRadius: 8, padding: '9px 10px', fontFamily: T.body }}
                   />
+                  {fieldErrors[key] && <span style={{ color: '#ef4444', fontSize: 12, fontWeight: 600, marginTop: 4, display: 'block' }}>{fieldErrors[key]}</span>}
                 </div>
               ))}
               {/* Specialization dropdown */}
               <div>
                 <label style={{ display: 'block', fontSize: 12, color: T.muted, marginBottom: 4 }}>Specialization *</label>
                 <select
-                  required
                   value={form.specialization}
-                  onChange={e => setForm(prev => ({ ...prev, specialization: e.target.value }))}
-                  style={{ width: '100%', border: `1px solid ${T.border}`, borderRadius: 8, padding: '9px 10px', fontFamily: T.body, background: '#fff' }}
+                  onChange={e => { setForm(prev => ({ ...prev, specialization: e.target.value })); if (fieldErrors.specialization) setFieldErrors(p => ({ ...p, specialization: '' })); }}
+                  style={{ width: '100%', border: `1px solid ${fieldErrors.specialization ? '#ef4444' : T.border}`, borderRadius: 8, padding: '9px 10px', fontFamily: T.body, background: fieldErrors.specialization ? '#fef2f2' : '#fff' }}
                 >
                   <option value="">-- Select specialization --</option>
                   {specializations.map(sp => (
                     <option key={sp.id} value={sp.name}>{sp.name}</option>
                   ))}
                 </select>
+                {fieldErrors.specialization && <span style={{ color: '#ef4444', fontSize: 12, fontWeight: 600, marginTop: 4, display: 'block' }}>{fieldErrors.specialization}</span>}
                 {specializations.length === 0 && (
                   <div style={{ fontSize: 11, color: '#f59e0b', marginTop: 4 }}>No specializations configured. Add them in System Setup → Specializations.</div>
                 )}

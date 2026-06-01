@@ -307,6 +307,35 @@ export default function SetupPage() {
   const [specName, setSpecName] = useState('');
   const [apptBlockUser, setApptBlockUser] = useState(null);
   const [selectedUsers, setSelectedUsers] = useState([]);
+  const [formError, setFormError] = useState({});
+  const [logoUploading, setLogoUploading] = useState(false);
+
+  const handleLogoUpload = async (file) => {
+    if (!file) return;
+    if (!file.type.startsWith('image/')) { setMsg('Please select an image file'); return; }
+    if (file.size > 2 * 1024 * 1024) { setMsg('Logo must be under 2MB'); return; }
+    setLogoUploading(true);
+    try {
+      const base64 = await new Promise((res, rej) => {
+        const reader = new FileReader();
+        reader.onload = () => res(String(reader.result).split(',')[1]);
+        reader.onerror = rej;
+        reader.readAsDataURL(file);
+      });
+      const { url } = await api('/admin/upload-logo', {
+        method: 'POST',
+        body: JSON.stringify({ base64, filename: file.name, content_type: file.type }),
+      });
+      const updated = { ...profile, logo_url: url };
+      setProfile(updated);
+      await api('/admin/hospital-profile', { method: 'POST', body: JSON.stringify(updated) });
+      setMsg('Logo updated successfully');
+    } catch (e) {
+      setMsg(e.message || 'Logo upload failed');
+    } finally {
+      setLogoUploading(false);
+    }
+  };
 
   const toggleSelectUser = (id) => setSelectedUsers(prev => prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id]);
 
@@ -394,15 +423,31 @@ export default function SetupPage() {
             <div style={{ display: 'flex', alignItems: 'center', gap: 15 }}>
               <div style={{ textAlign: 'right' }}>
                 <div style={{ fontSize: '.75rem', fontWeight: 600, color: '#64748b', marginBottom: 4 }}>HOSPITAL LOGO</div>
-                <div style={{ border: '1px dashed #cbd5e1', borderRadius: 8, padding: 8, background: '#f8fafc' }}>
+                <div style={{ border: '1px dashed #cbd5e1', borderRadius: 8, padding: 8, background: '#f8fafc', position: 'relative' }}>
                   {profile.logo_url ? (
-                    <img src={profile.logo_url} alt="Logo" style={{ height: 50, borderRadius: 4 }} />
+                    <>
+                      <img src={profile.logo_url} alt="Logo" style={{ height: 50, borderRadius: 4 }} />
+                      <button
+                        onClick={async () => {
+                          if (!confirm('Remove the hospital logo?')) return;
+                          const updated = { ...profile, logo_url: '' };
+                          setProfile(updated);
+                          try { await api('/admin/hospital-profile', { method: 'POST', body: JSON.stringify(updated) }); setMsg('Logo removed'); }
+                          catch (e) { setMsg(e.message); }
+                        }}
+                        title="Remove logo"
+                        style={{ position: 'absolute', top: -8, right: -8, width: 22, height: 22, borderRadius: '50%', background: '#ef4444', color: '#fff', border: '2px solid #fff', cursor: 'pointer', fontSize: 12, lineHeight: 1, display: 'flex', alignItems: 'center', justifyContent: 'center' }}
+                      >×</button>
+                    </>
                   ) : (
                     <div style={{ width: 50, height: 50, display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#94a3b8', fontSize: 20 }}>🏥</div>
                   )}
                 </div>
               </div>
-              <button onClick={() => alert('Logo upload feature: This logo will be reflected on all documents and invoices.')} style={s.btnSec}>Update Logo</button>
+              <label style={{ ...s.btnSec, cursor: logoUploading ? 'default' : 'pointer', opacity: logoUploading ? .7 : 1, display: 'inline-flex', alignItems: 'center' }}>
+                {logoUploading ? 'Uploading…' : (profile.logo_url ? 'Change Logo' : 'Update Logo')}
+                <input type="file" accept="image/*" disabled={logoUploading} onChange={e => handleLogoUpload(e.target.files?.[0])} style={{ display: 'none' }} />
+              </label>
             </div>
           </div>
           <div style={s.grid3}>
@@ -448,22 +493,30 @@ export default function SetupPage() {
           {orgSubTab === 0 && (
             <div>
               <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 12 }}>
-                <button onClick={() => { setShowForm(true); setForm({}); }} style={s.btnPri}>+ Add Branch</button>
+                <button onClick={() => { setShowForm(true); setForm({}); setFormError({}); }} style={s.btnPri}>+ Add Branch</button>
               </div>
               {showForm && (
                 <div style={{ ...s.card, marginBottom: 16, borderLeft: '4px solid #00b4a0' }}>
                   <div style={s.grid3}>
-                    {[['Branch Name', 'branch_name'], ['City', 'city'], ['Phone', 'phone'], ['Address', 'address'], ['Email', 'email']].map(([l, k]) => (
-                      <div key={k} style={s.fg}><label style={s.label}>{l}</label><input value={form[k] || ''} onChange={e => setForm({ ...form, [k]: e.target.value })} style={s.input} /></div>
+                    {[['Branch Name *', 'branch_name'], ['City', 'city'], ['Phone', 'phone'], ['Address', 'address'], ['Email', 'email']].map(([l, k]) => (
+                      <div key={k} style={s.fg}>
+                        <label style={s.label}>{l}</label>
+                        <input value={form[k] || ''} onChange={e => { setForm({ ...form, [k]: e.target.value }); if (formError[k]) setFormError({ ...formError, [k]: '' }); }} style={{ ...s.input, ...(formError[k] ? { borderColor: '#ef4444', background: '#fef2f2' } : {}) }} />
+                        {formError[k] && <span style={{ color: '#ef4444', fontSize: 12, fontWeight: 600, marginTop: 4, display: 'block' }}>{formError[k]}</span>}
+                      </div>
                     ))}
                   </div>
                   <div style={{ display: 'flex', gap: 10 }}><button onClick={async () => {
+                    const errs = {};
+                    if (!form.branch_name?.trim()) errs.branch_name = 'Branch name is required';
+                    if (form.email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(form.email)) errs.email = 'Enter a valid email';
+                    if (Object.keys(errs).length) { setFormError(errs); return; }
                     try {
                       await api('/admin/branches', { method: 'POST', body: JSON.stringify(form) });
-                      setMsg('Branch created'); setShowForm(false); setForm({});
+                      setMsg('Branch created'); setShowForm(false); setForm({}); setFormError({});
                       await loadAll();
                     } catch (e) { setMsg(e.message); }
-                  }} style={s.btnPri}>Create</button><button onClick={() => setShowForm(false)} style={s.btnSec}>Cancel</button></div>
+                  }} style={s.btnPri}>Create</button><button onClick={() => { setShowForm(false); setFormError({}); }} style={s.btnSec}>Cancel</button></div>
                 </div>
               )}
               <div style={s.card}>
@@ -488,22 +541,30 @@ export default function SetupPage() {
           {orgSubTab === 1 && (
             <div>
               <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 12 }}>
-                <button onClick={() => { setShowForm(true); setForm({}); }} style={s.btnPri}>+ Add Department</button>
+                <button onClick={() => { setShowForm(true); setForm({}); setFormError({}); }} style={s.btnPri}>+ Add Department</button>
               </div>
               {showForm && (
                 <div style={{ ...s.card, marginBottom: 16, borderLeft: '4px solid #00b4a0' }}>
                   <div style={s.grid3}>
-                    {[['Department Name', 'department_name'], ['Code', 'department_code'], ['Default Fee (₹)', 'default_consultation_fee'], ['Department Type', 'department_type']].map(([l, k]) => (
-                      <div key={k} style={s.fg}><label style={s.label}>{l}</label><input value={form[k] || ''} onChange={e => setForm({ ...form, [k]: e.target.value })} style={s.input} /></div>
+                    {[['Department Name *', 'department_name'], ['Code', 'department_code'], ['Default Fee (₹)', 'default_consultation_fee'], ['Department Type', 'department_type']].map(([l, k]) => (
+                      <div key={k} style={s.fg}>
+                        <label style={s.label}>{l}</label>
+                        <input value={form[k] || ''} onChange={e => { setForm({ ...form, [k]: e.target.value }); if (formError[k]) setFormError({ ...formError, [k]: '' }); }} style={{ ...s.input, ...(formError[k] ? { borderColor: '#ef4444', background: '#fef2f2' } : {}) }} />
+                        {formError[k] && <span style={{ color: '#ef4444', fontSize: 12, fontWeight: 600, marginTop: 4, display: 'block' }}>{formError[k]}</span>}
+                      </div>
                     ))}
                   </div>
                   <div style={{ display: 'flex', gap: 10 }}><button onClick={async () => {
+                    const errs = {};
+                    if (!form.department_name?.trim()) errs.department_name = 'Department name is required';
+                    if (form.default_consultation_fee && isNaN(Number(form.default_consultation_fee))) errs.default_consultation_fee = 'Fee must be a number';
+                    if (Object.keys(errs).length) { setFormError(errs); return; }
                     try {
                       await api('/admin/departments', { method: 'POST', body: JSON.stringify(form) });
-                      setMsg('Department created'); setShowForm(false); setForm({});
+                      setMsg('Department created'); setShowForm(false); setForm({}); setFormError({});
                       await loadAll();
                     } catch (e) { setMsg(e.message); }
-                  }} style={s.btnPri}>Create</button><button onClick={() => setShowForm(false)} style={s.btnSec}>Cancel</button></div>
+                  }} style={s.btnPri}>Create</button><button onClick={() => { setShowForm(false); setFormError({}); }} style={s.btnSec}>Cancel</button></div>
                 </div>
               )}
               <div style={s.card}>
@@ -533,32 +594,37 @@ export default function SetupPage() {
           {orgSubTab === 2 && (
             <div>
               <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 12 }}>
-                <button onClick={() => { setShowForm(true); setForm({}); }} style={s.btnPri}>+ Add Room</button>
+                <button onClick={() => { setShowForm(true); setForm({}); setFormError({}); }} style={s.btnPri}>+ Add Room</button>
               </div>
               {showForm && (
                 <div style={{ ...s.card, marginBottom: 16, borderLeft: '4px solid #00b4a0' }}>
                   <div style={s.grid3}>
-                    {[['Room Name', 'room_name'], ['Room Type', 'room_type'], ['Total Beds', 'total_beds']].map(([l, k]) => (
+                    {[['Room Name *', 'room_name'], ['Room Type', 'room_type'], ['Total Beds', 'total_beds']].map(([l, k]) => (
                       <div key={k} style={s.fg}>
                         <label style={s.label}>{l}</label>
-                        <input 
-                          type={k === 'total_beds' ? 'number' : 'text'} 
-                          value={form[k] || ''} 
-                          onChange={e => setForm({ ...form, [k]: e.target.value })} 
-                          style={s.input} 
+                        <input
+                          type={k === 'total_beds' ? 'number' : 'text'}
+                          value={form[k] || ''}
+                          onChange={e => { setForm({ ...form, [k]: e.target.value }); if (formError[k]) setFormError({ ...formError, [k]: '' }); }}
+                          style={{ ...s.input, ...(formError[k] ? { borderColor: '#ef4444', background: '#fef2f2' } : {}) }}
                         />
+                        {formError[k] && <span style={{ color: '#ef4444', fontSize: 12, fontWeight: 600, marginTop: 4, display: 'block' }}>{formError[k]}</span>}
                       </div>
                     ))}
                   </div>
                   <div style={{ display: 'flex', gap: 10 }}>
                     <button onClick={async () => {
+                      const errs = {};
+                      if (!form.room_name?.trim()) errs.room_name = 'Room name is required';
+                      if (form.total_beds && isNaN(Number(form.total_beds))) errs.total_beds = 'Beds must be a number';
+                      if (Object.keys(errs).length) { setFormError(errs); return; }
                       try {
                         await api('/admin/rooms', { method: 'POST', body: JSON.stringify({ ...form, total_beds: parseInt(form.total_beds || 1), available_beds: parseInt(form.total_beds || 1) }) });
-                        setMsg('Room created'); setShowForm(false); setForm({});
+                        setMsg('Room created'); setShowForm(false); setForm({}); setFormError({});
                         await loadAll();
                       } catch (e) { setMsg(e.message); }
                     }} style={s.btnPri}>Create</button>
-                    <button onClick={() => setShowForm(false)} style={s.btnSec}>Cancel</button>
+                    <button onClick={() => { setShowForm(false); setFormError({}); }} style={s.btnSec}>Cancel</button>
                   </div>
                 </div>
               )}
@@ -594,24 +660,37 @@ export default function SetupPage() {
           {orgSubTab === 3 && (
             <div>
               <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 12 }}>
-                <button onClick={() => { setShowForm(true); setEditingLabTest(null); setLabTestForm({ test_name: '', test_code: '', category: '', fee: '', description: '' }); }} style={s.btnPri}>+ Add Lab Test</button>
+                <button onClick={() => { setShowForm(true); setEditingLabTest(null); setLabTestForm({ test_name: '', test_code: '', category: '', fee: '', description: '' }); setFormError({}); }} style={s.btnPri}>+ Add Lab Test</button>
               </div>
               {showForm && (
                 <div style={{ ...s.card, marginBottom: 16, borderLeft: '4px solid #00b4a0' }}>
                   <h2 style={s.h2}>{editingLabTest ? 'Edit Lab Test' : 'Add New Lab Test'}</h2>
                   <div style={s.grid3}>
                     {[['Test Name *', 'test_name'], ['Test Code', 'test_code'], ['Category', 'category']].map(([l, k]) => (
-                      <div key={k} style={s.fg}><label style={s.label}>{l}</label><input value={labTestForm[k] || ''} onChange={e => setLabTestForm({ ...labTestForm, [k]: e.target.value })} style={s.input} /></div>
+                      <div key={k} style={s.fg}>
+                        <label style={s.label}>{l}</label>
+                        <input value={labTestForm[k] || ''} onChange={e => { setLabTestForm({ ...labTestForm, [k]: e.target.value }); if (formError[k]) setFormError({ ...formError, [k]: '' }); }} style={{ ...s.input, ...(formError[k] ? { borderColor: '#ef4444', background: '#fef2f2' } : {}) }} />
+                        {formError[k] && <span style={{ color: '#ef4444', fontSize: 12, fontWeight: 600, marginTop: 4, display: 'block' }}>{formError[k]}</span>}
+                      </div>
                     ))}
-                    <div style={s.fg}><label style={s.label}>Fee (INR) *</label><input type="number" value={labTestForm.fee || ''} onChange={e => setLabTestForm({ ...labTestForm, fee: e.target.value })} style={s.input} /></div>
+                    <div style={s.fg}>
+                      <label style={s.label}>Fee (INR) *</label>
+                      <input type="number" value={labTestForm.fee || ''} onChange={e => { setLabTestForm({ ...labTestForm, fee: e.target.value }); if (formError.fee) setFormError({ ...formError, fee: '' }); }} style={{ ...s.input, ...(formError.fee ? { borderColor: '#ef4444', background: '#fef2f2' } : {}) }} />
+                      {formError.fee && <span style={{ color: '#ef4444', fontSize: 12, fontWeight: 600, marginTop: 4, display: 'block' }}>{formError.fee}</span>}
+                    </div>
                   </div>
                   <div style={{ display: 'flex', gap: 10 }}><button onClick={async () => {
+                    const errs = {};
+                    if (!labTestForm.test_name?.trim()) errs.test_name = 'Test name is required';
+                    if (labTestForm.fee === '' || labTestForm.fee == null) errs.fee = 'Fee is required';
+                    else if (isNaN(Number(labTestForm.fee))) errs.fee = 'Fee must be a number';
+                    if (Object.keys(errs).length) { setFormError(errs); return; }
                     try {
                       if (editingLabTest) await api(`/admin/lab-tests/${editingLabTest.id}`, { method: 'PUT', body: JSON.stringify(labTestForm) });
                       else await api('/admin/lab-tests', { method: 'POST', body: JSON.stringify(labTestForm) });
-                      setMsg('Lab test saved'); setShowForm(false); await loadAll();
+                      setMsg('Lab test saved'); setShowForm(false); setFormError({}); await loadAll();
                     } catch (e) { setMsg(e.message); }
-                  }} style={s.btnPri}>Save</button><button onClick={() => setShowForm(false)} style={s.btnSec}>Cancel</button></div>
+                  }} style={s.btnPri}>Save</button><button onClick={() => { setShowForm(false); setFormError({}); }} style={s.btnSec}>Cancel</button></div>
                 </div>
               )}
               <div style={s.card}>
@@ -693,14 +772,23 @@ export default function SetupPage() {
           </div>
 
           <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 12 }}>
-            <button onClick={() => { setShowForm(true); setForm({ role_id: 5 }); setEditingUser(null); }} style={s.btnPri}>+ Add User</button>
+            <button onClick={() => { setShowForm(true); setForm({ role_id: 5 }); setEditingUser(null); setFormError({}); }} style={s.btnPri}>+ Add User</button>
           </div>
           {showForm && (
             <div style={{ ...s.card, marginBottom: 16, borderLeft: '4px solid #00b4a0' }}>
               <h2 style={s.h2}>{editingUser ? 'Edit User' : 'New User'}</h2>
               <div style={s.grid3}>
                 {[['First Name', 'first_name'], ['Last Name', 'last_name'], ['Email', 'email'], ['Phone', 'phone'], ['Password', 'password']].map(([l, k]) => (
-                  <div key={k} style={s.fg}><label style={s.label}>{l}</label><input type={k === 'password' ? 'password' : 'text'} value={form[k] || ''} onChange={e => setForm({ ...form, [k]: e.target.value })} style={s.input} /></div>
+                  <div key={k} style={s.fg}>
+                    <label style={s.label}>{l}</label>
+                    <input
+                      type={k === 'password' ? 'password' : 'text'}
+                      value={form[k] || ''}
+                      onChange={e => { setForm({ ...form, [k]: e.target.value }); if (formError[k]) setFormError({ ...formError, [k]: '' }); }}
+                      style={{ ...s.input, ...(formError[k] ? { borderColor: '#ef4444', background: '#fef2f2' } : {}) }}
+                    />
+                    {formError[k] && <span style={{ color: '#ef4444', fontSize: 12, fontWeight: 600, marginTop: 4, display: 'block' }}>{formError[k]}</span>}
+                  </div>
                 ))}
               </div>
               <div style={{ ...s.fg, marginTop: 4 }}>
@@ -715,22 +803,41 @@ export default function SetupPage() {
                           const current = Array.isArray(form.roles) ? form.roles : [form.role_id].filter(Boolean);
                           const updated = e.target.checked ? [...current, r.value] : current.filter(x => x !== r.value);
                           setForm({ ...form, roles: updated, role_id: updated[0] || r.value });
+                          if (formError.roles) setFormError({ ...formError, roles: '' });
                         }} />
                         {r.label}
                       </label>
                     );
                   })}
                 </div>
+                {formError.roles && <span style={{ color: '#ef4444', fontSize: 12, fontWeight: 600, marginTop: 6, display: 'block' }}>{formError.roles}</span>}
               </div>
               <div style={{ display: 'flex', gap: 10, marginTop: 15 }}>
                 <button onClick={async () => {
+                  // Client-side inline validation
+                  const errs = {};
+                  if (!form.first_name?.trim()) errs.first_name = 'First name is required';
+                  if (!form.last_name?.trim())  errs.last_name  = 'Last name is required';
+                  if (!form.email?.trim())      errs.email      = 'Email is required';
+                  else if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(form.email)) errs.email = 'Enter a valid email';
+                  if (!editingUser && !form.password?.trim()) errs.password = 'Password is required';
+                  const selRoles = Array.isArray(form.roles) ? form.roles : [form.role_id].filter(Boolean);
+                  if (selRoles.length === 0) errs.roles = 'Select at least one role';
+                  if (Object.keys(errs).length) { setFormError(errs); return; }
+
+                  setFormError({});
                   try {
                     if (editingUser) await api(`/admin/users/${editingUser.id}`, { method: 'PUT', body: JSON.stringify(form) });
                     else await api('/admin/users', { method: 'POST', body: JSON.stringify(form) });
                     setMsg('User saved'); setShowForm(false); await loadAll();
-                  } catch (e) { setMsg(e.message); }
+                  } catch (e) {
+                    const m = (e.message || '').toLowerCase();
+                    if (m.includes('email')) setFormError({ email: e.message });
+                    else if (m.includes('password')) setFormError({ password: e.message });
+                    else setMsg(e.message);
+                  }
                 }} style={s.btnPri}>Save</button>
-                <button onClick={() => setShowForm(false)} style={s.btnSec}>Cancel</button>
+                <button onClick={() => { setShowForm(false); setFormError({}); }} style={s.btnSec}>Cancel</button>
               </div>
             </div>
           )}
@@ -793,6 +900,7 @@ export default function SetupPage() {
                           setEditingUser(u);
                           setForm({ ...u, password: '', roles: Array.isArray(u.roles) && u.roles.length ? u.roles : [u.role_id].filter(Boolean) });
                           setShowForm(true);
+                          setFormError({});
                         }} style={s.actBtn}>Edit</button>
                         {!isAdmin && (
                           <button onClick={() => deleteOneUser(u)} style={{ ...s.actBtn, marginLeft: 6, color: '#dc2626', borderColor: '#fecaca' }}>Delete</button>

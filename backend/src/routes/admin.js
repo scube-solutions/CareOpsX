@@ -7,6 +7,7 @@ const adminOnly = [verifyToken, requireRole([1])];
 // Hospital profile
 router.get('/hospital-profile', verifyToken, ctrl.getHospitalProfile);
 router.post('/hospital-profile', ...adminOnly, ctrl.upsertHospitalProfile);
+router.post('/upload-logo', ...adminOnly, ctrl.uploadLogo);
 
 // Branches
 router.get('/branches', verifyToken, ctrl.getBranches);

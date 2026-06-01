@@ -37,6 +37,32 @@ const upsertHospitalProfile = async (req, res) => {
   }
 };
 
+// ── Logo Upload (Supabase Storage) ───────────────────────────────────────────
+const uploadLogo = async (req, res) => {
+  try {
+    const supabase = req.db;
+    const { organizationId } = await getOrganizationContext(req);
+    const { base64, filename, content_type } = req.body;
+    if (!base64 || !filename) return res.status(400).json({ error: 'base64 and filename required' });
+
+    const buffer = Buffer.from(base64, 'base64');
+    const ext    = (filename.split('.').pop() || 'png').toLowerCase();
+    const path   = `org_${organizationId}/logo_${Date.now()}.${ext}`;
+
+    await supabase.storage.createBucket('hospital-assets', { public: true }).catch(() => {});
+
+    const { data, error } = await supabase.storage
+      .from('hospital-assets')
+      .upload(path, buffer, { contentType: content_type || 'image/png', upsert: true });
+    if (error) throw error;
+
+    const { data: { publicUrl } } = supabase.storage.from('hospital-assets').getPublicUrl(data.path);
+    return res.json({ url: publicUrl });
+  } catch (err) {
+    return res.status(500).json({ error: err.message });
+  }
+};
+
 // ── Branches ─────────────────────────────────────────────────────────────────
 const getBranches = async (req, res) => {
   try {
@@ -262,6 +288,23 @@ const createUser = async (req, res) => {
     if (!seatCheck.ok) return res.status(409).json({ error: seatCheck.message });
     const { data, error } = await supabase.from('users').insert([{ first_name, last_name, email, phone: phone || null, password_hash, role_id: primaryRole, roles: userRoles, branch_id: branch_id || null, organization_id: organizationId, is_active: true, created_by: req.user.id }]).select('id, first_name, last_name, email, phone, role_id, roles, is_active, branch_id, organization_id, created_at').single();
     if (error) throw error;
+
+    // Auto-create a doctor profile so the user shows on the Doctors page immediately
+    if (userRoles.includes(2)) {
+      const { specialization, consultation_fee, experience_years } = req.body;
+      const { data: existingDoc } = await supabase.from('doctors').select('id').eq('user_id', data.id).maybeSingle();
+      if (!existingDoc) {
+        await supabase.from('doctors').insert([{
+          user_id: data.id,
+          specialization: specialization || 'General Medicine',
+          consultation_fee: consultation_fee != null ? Number(consultation_fee) : 0,
+          experience_years: experience_years != null && experience_years !== '' ? Number(experience_years) : null,
+          organization_id: organizationId,
+          is_active: true,
+        }]);
+      }
+    }
+
     await auditLog({ user_id: req.user.id, role_id: req.user.role_id, organization_id: req.user.organization_id || null, action: 'CREATE_USER', module: 'Admin', entity_type: 'user', entity_id: data.id });
     return res.status(201).json({ message: 'User created', user: data });
   } catch (err) {
@@ -289,6 +332,22 @@ const updateUser = async (req, res) => {
     }
     const { data, error } = await supabase.from('users').update(payload).eq('id', req.params.id).eq('organization_id', organizationId).select('id, first_name, last_name, email, phone, role_id, roles, is_active, branch_id').single();
     if (error) throw error;
+
+    // If the user now has the doctor role, ensure a doctor profile exists
+    const updatedRoles = Array.isArray(data.roles) && data.roles.length ? data.roles : [data.role_id].filter(Boolean);
+    if (updatedRoles.includes(2)) {
+      const { data: existingDoc } = await supabase.from('doctors').select('id').eq('user_id', req.params.id).maybeSingle();
+      if (!existingDoc) {
+        await supabase.from('doctors').insert([{
+          user_id: req.params.id,
+          specialization: 'General Medicine',
+          consultation_fee: 0,
+          organization_id: organizationId,
+          is_active: true,
+        }]);
+      }
+    }
+
     await auditLog({ user_id: req.user.id, role_id: req.user.role_id, organization_id: req.user.organization_id || null, action: 'UPDATE_USER', module: 'Admin', entity_type: 'user', entity_id: req.params.id });
     return res.json({ message: 'User updated', user: data });
   } catch (err) {
@@ -581,6 +640,7 @@ module.exports = {
   getDepartments, createDepartment, updateDepartment, toggleDepartment,
   getConsultationTypes, createConsultationType, updateConsultationType,
   getDoctorLeaves, createDoctorLeave, deleteDoctorLeave,
+  uploadLogo,
   getUsers, createUser, updateUser, toggleUserActive, deleteUser, bulkDeleteUsers, resetUserPassword,
   getLabTestCatalog, createLabTest, updateLabTest, deleteLabTest,
   getSpecializations, createSpecialization, toggleSpecialization, deleteSpecialization,
