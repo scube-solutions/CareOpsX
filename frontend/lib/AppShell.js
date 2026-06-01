@@ -95,7 +95,7 @@ function ProfileMenu({ user, roleLabel }) {
     try {
       const data = await api('/patients/me');
       const p = data.user || data;
-      setForm({ first_name: p.first_name || u.first_name || '', last_name: p.last_name || u.last_name || '', phone: p.phone || u.phone || '' });
+      setForm({ first_name: p.first_name || localUser.first_name || '', last_name: p.last_name || localUser.last_name || '', phone: p.phone || localUser.phone || '' });
     } catch { /* use stored fallback */ }
     setEditOpen(true);
   };

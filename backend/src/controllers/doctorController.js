@@ -112,8 +112,11 @@ const attachUsers = async (doctors, db) => {
 const getDoctors = async (req, res) => {
   try {
     const supabase = req.db;
+    const organizationId = req.user?.organization_id ?? null;
     const { specialty } = req.query;
-    let query = supabase.from('doctors').select('id, user_id, specialization, consultation_fee, experience_years, is_active');
+    let query = supabase.from('doctors').select('id, user_id, specialization, consultation_fee, experience_years, is_active, organization_id');
+    // Multi-tenant isolation: only this org's doctors (super-admin with no org sees all)
+    if (organizationId) query = query.eq('organization_id', organizationId);
     if (specialty) query = query.ilike('specialization', `%${specialty}%`);
     const { data, error } = await query;
     if (error) throw error;
@@ -129,7 +132,10 @@ const getDoctors = async (req, res) => {
 const getDoctorById = async (req, res) => {
   try {
     const supabase = req.db;
-    const { data, error } = await supabase.from('doctors').select('id, user_id, specialization, consultation_fee, experience_years, is_active').eq('id', req.params.id).single();
+    const organizationId = req.user?.organization_id ?? null;
+    let q = supabase.from('doctors').select('id, user_id, specialization, consultation_fee, experience_years, is_active, organization_id').eq('id', req.params.id);
+    if (organizationId) q = q.eq('organization_id', organizationId);
+    const { data, error } = await q.single();
     if (error || !data) return res.status(404).json({ error: 'Doctor not found' });
     const [doctor] = await attachUsers([data], supabase);
     return res.status(200).json({ doctor });
@@ -143,15 +149,19 @@ const getDoctorById = async (req, res) => {
 const createDoctor = async (req, res) => {
   try {
     const supabase = req.db;
+    const organizationId = req.user?.organization_id ?? null;
     const { user_id, specialization, consultation_fee, experience } = req.body;
     if (!user_id || !specialization || consultation_fee === undefined) {
       return res.status(400).json({ error: 'user_id, specialization, and consultation_fee are required' });
     }
-    const { data: userRecord, error: userErr } = await supabase.from('users').select('id, role_id').eq('id', user_id).single();
-    if (userErr || !userRecord) return res.status(404).json({ error: 'User not found' });
+    // User must belong to the same org
+    let userQ = supabase.from('users').select('id, role_id, organization_id').eq('id', user_id);
+    if (organizationId) userQ = userQ.eq('organization_id', organizationId);
+    const { data: userRecord, error: userErr } = await userQ.single();
+    if (userErr || !userRecord) return res.status(404).json({ error: 'User not found in this organization' });
     if (userRecord.role_id !== 2) return res.status(400).json({ error: 'User must have doctor role (role_id=2)' });
 
-    const { data, error } = await supabase.from('doctors').insert({ user_id, specialization, consultation_fee: Number(consultation_fee), experience_years: experience || null }).select('id, user_id, specialization, consultation_fee, experience_years').single();
+    const { data, error } = await supabase.from('doctors').insert({ user_id, specialization, consultation_fee: Number(consultation_fee), experience_years: experience || null, organization_id: organizationId }).select('id, user_id, specialization, consultation_fee, experience_years').single();
     if (error) throw error;
     const [doctor] = await attachUsers([data], supabase);
     return res.status(201).json({ message: 'Doctor created', doctor });
@@ -165,10 +175,13 @@ const createDoctor = async (req, res) => {
 const updateDoctor = async (req, res) => {
   try {
     const supabase = req.db;
+    const organizationId = req.user?.organization_id ?? null;
     const { id } = req.params;
     const { first_name, last_name, email, phone, specialization, consultation_fee, experience_years } = req.body;
 
-    const { data: doctor, error: fetchErr } = await supabase.from('doctors').select('id, user_id').eq('id', id).single();
+    let fetchQ = supabase.from('doctors').select('id, user_id, organization_id').eq('id', id);
+    if (organizationId) fetchQ = fetchQ.eq('organization_id', organizationId);
+    const { data: doctor, error: fetchErr } = await fetchQ.single();
     if (fetchErr || !doctor) return res.status(404).json({ error: 'Doctor not found' });
 
     const userPayload = {};
@@ -207,7 +220,15 @@ const updateDoctor = async (req, res) => {
 const deleteDoctor = async (req, res) => {
   try {
     const supabase = req.db;
+    const organizationId = req.user?.organization_id ?? null;
     const id = req.params.id;
+
+    // Verify the doctor belongs to this org before any delete work
+    let docQ = supabase.from('doctors').select('id, organization_id').eq('id', id);
+    if (organizationId) docQ = docQ.eq('organization_id', organizationId);
+    const { data: docRow } = await docQ.single();
+    if (!docRow) return res.status(404).json({ error: 'Doctor not found' });
+
     const { data: appts, error: apptErr } = await supabase
       .from('appointments')
       .select('id, appointment_date, appointment_time, status, patient_id')
