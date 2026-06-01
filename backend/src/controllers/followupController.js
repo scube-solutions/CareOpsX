@@ -39,11 +39,13 @@ const attachRelated = async (rows, supabase) => {
 const getFollowUps = async (req, res) => {
   try {
     const supabase = req.db;
+    const organizationId = req.user?.organization_id ?? null;
     const { patient_id, status, doctor_id, date_from, date_to, missed_only } = req.query;
     let query = supabase.from('follow_up_plans')
       .select('*')
       .order('follow_up_date', { ascending: true });
 
+    if (organizationId)    query = query.eq('organization_id', organizationId);
     if (patient_id)        query = query.eq('patient_id', patient_id);
     if (status)            query = query.eq('status', status);
     if (doctor_id)         query = query.eq('doctor_id', doctor_id);
@@ -64,9 +66,10 @@ const getFollowUps = async (req, res) => {
 const getFollowUpById = async (req, res) => {
   try {
     const supabase = req.db;
-    const { data, error } = await supabase.from('follow_up_plans')
-      .select('*')
-      .eq('id', req.params.id).single();
+    const organizationId = req.user?.organization_id ?? null;
+    let q = supabase.from('follow_up_plans').select('*').eq('id', req.params.id);
+    if (organizationId) q = q.eq('organization_id', organizationId);
+    const { data, error } = await q.single();
     if (error || !data) return res.status(404).json({ error: 'Follow-up not found' });
     const [follow_up] = await attachRelated([data], supabase);
     return res.json({ follow_up });
@@ -93,6 +96,7 @@ const createFollowUp = async (req, res) => {
       disease_tag: disease_tag || null,
       status: 'scheduled',
       reminder_sent: false,
+      organization_id: req.user?.organization_id ?? null,
       created_by: req.user.id,
       created_at: new Date().toISOString()
     }]).select('*').single();
@@ -103,7 +107,7 @@ const createFollowUp = async (req, res) => {
       await supabase.from('patients').update({ chronic_disease_tag: disease_tag, updated_by: req.user.id }).eq('id', patient_id);
     }
 
-    await auditLog({ user_id: req.user.id, role_id: req.user.role_id, action: 'CREATE_FOLLOWUP', module: 'FollowUp', entity_type: 'follow_up_plan', entity_id: data.id });
+    await auditLog({ user_id: req.user.id, role_id: req.user.role_id, organization_id: req.user.organization_id || null, action: 'CREATE_FOLLOWUP', module: 'FollowUp', entity_type: 'follow_up_plan', entity_id: data.id });
     return res.status(201).json({ message: 'Follow-up plan created', follow_up: data });
   } catch (err) {
     return res.status(500).json({ error: err.message });
@@ -114,11 +118,15 @@ const createFollowUp = async (req, res) => {
 const updateFollowUp = async (req, res) => {
   try {
     const supabase = req.db;
+    const organizationId = req.user?.organization_id ?? null;
     const { id } = req.params;
-    const { data: old } = await supabase.from('follow_up_plans').select('*').eq('id', id).single();
+    let oldQ = supabase.from('follow_up_plans').select('*').eq('id', id);
+    if (organizationId) oldQ = oldQ.eq('organization_id', organizationId);
+    const { data: old } = await oldQ.single();
+    if (!old) return res.status(404).json({ error: 'Follow-up not found' });
     const { data, error } = await supabase.from('follow_up_plans').update({ ...req.body, updated_by: req.user.id, updated_at: new Date().toISOString() }).eq('id', id).select('*').single();
     if (error) throw error;
-    await auditLog({ user_id: req.user.id, role_id: req.user.role_id, action: 'UPDATE_FOLLOWUP', module: 'FollowUp', entity_type: 'follow_up_plan', entity_id: id, old_data: old, new_data: req.body });
+    await auditLog({ user_id: req.user.id, role_id: req.user.role_id, organization_id: req.user.organization_id || null, action: 'UPDATE_FOLLOWUP', module: 'FollowUp', entity_type: 'follow_up_plan', entity_id: id, old_data: old, new_data: req.body });
     return res.json({ message: 'Follow-up updated', follow_up: data });
   } catch (err) {
     return res.status(500).json({ error: err.message });
@@ -129,12 +137,15 @@ const updateFollowUp = async (req, res) => {
 const getMissedFollowUps = async (req, res) => {
   try {
     const supabase = req.db;
+    const organizationId = req.user?.organization_id ?? null;
     const today = new Date().toISOString().split('T')[0];
-    const { data, error } = await supabase.from('follow_up_plans')
+    let q = supabase.from('follow_up_plans')
       .select('*')
       .eq('status', 'scheduled')
       .lt('follow_up_date', today)
       .order('follow_up_date', { ascending: true });
+    if (organizationId) q = q.eq('organization_id', organizationId);
+    const { data, error } = await q;
 
     if (error) throw error;
     const missed_follow_ups = await attachRelated(data || [], supabase);
@@ -148,14 +159,17 @@ const getMissedFollowUps = async (req, res) => {
 const getUpcomingFollowUps = async (req, res) => {
   try {
     const supabase = req.db;
+    const organizationId = req.user?.organization_id ?? null;
     const today   = new Date().toISOString().split('T')[0];
     const end     = new Date(Date.now() + 90 * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
-    const { data, error } = await supabase.from('follow_up_plans')
+    let q = supabase.from('follow_up_plans')
       .select('*')
       .eq('status', 'scheduled')
       .gte('follow_up_date', today)
       .lte('follow_up_date', end)
       .order('follow_up_date', { ascending: true });
+    if (organizationId) q = q.eq('organization_id', organizationId);
+    const { data, error } = await q;
 
     if (error) throw error;
     const upcoming = await attachRelated(data || [], supabase);

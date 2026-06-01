@@ -4,6 +4,7 @@ const { auditLog } = require('../middlewares/audit');
 const getWatchlist = async (req, res) => {
   try {
     const supabase = req.db;
+    const organizationId = req.user?.organization_id ?? null;
     const { risk_level, outcome, page = 1, limit = 20 } = req.query;
     const offset = (parseInt(page) - 1) * parseInt(limit);
 
@@ -12,6 +13,7 @@ const getWatchlist = async (req, res) => {
       .order('risk_score', { ascending: false })
       .range(offset, offset + parseInt(limit) - 1);
 
+    if (organizationId) query = query.eq('organization_id', organizationId);
     if (risk_level) query = query.eq('risk_level', risk_level);
     if (outcome) query = query.eq('outcome', outcome);
     else query = query.in('outcome', ['at_risk', 'still_at_risk']);
@@ -28,7 +30,10 @@ const getWatchlist = async (req, res) => {
 const getRules = async (req, res) => {
   try {
     const supabase = req.db;
-    const { data, error } = await supabase.from('drop_off_rules').select('*').eq('is_active', true).order('risk_level');
+    const organizationId = req.user?.organization_id ?? null;
+    let q = supabase.from('drop_off_rules').select('*').eq('is_active', true).order('risk_level');
+    if (organizationId) q = q.eq('organization_id', organizationId);
+    const { data, error } = await q;
     if (error) throw error;
     return res.json({ rules: data });
   } catch (err) {
@@ -39,7 +44,8 @@ const getRules = async (req, res) => {
 const createRule = async (req, res) => {
   try {
     const supabase = req.db;
-    const { data, error } = await supabase.from('drop_off_rules').insert([{ ...req.body, is_active: true, created_by: req.user.id, created_at: new Date().toISOString() }]).select('*').single();
+    const organizationId = req.user?.organization_id ?? null;
+    const { data, error } = await supabase.from('drop_off_rules').insert([{ ...req.body, organization_id: organizationId, is_active: true, created_by: req.user.id, created_at: new Date().toISOString() }]).select('*').single();
     if (error) throw error;
     return res.status(201).json({ message: 'Rule created', rule: data });
   } catch (err) {
@@ -50,8 +56,12 @@ const createRule = async (req, res) => {
 const updateRule = async (req, res) => {
   try {
     const supabase = req.db;
-    const { data, error } = await supabase.from('drop_off_rules').update({ ...req.body, updated_by: req.user.id, updated_at: new Date().toISOString() }).eq('id', req.params.id).select('*').single();
+    const organizationId = req.user?.organization_id ?? null;
+    let q = supabase.from('drop_off_rules').update({ ...req.body, updated_by: req.user.id, updated_at: new Date().toISOString() }).eq('id', req.params.id);
+    if (organizationId) q = q.eq('organization_id', organizationId);
+    const { data, error } = await q.select('*').single();
     if (error) throw error;
+    if (!data) return res.status(404).json({ error: 'Rule not found' });
     return res.json({ message: 'Rule updated', rule: data });
   } catch (err) {
     return res.status(500).json({ error: err.message });
@@ -62,10 +72,13 @@ const updateRule = async (req, res) => {
 const recordAction = async (req, res) => {
   try {
     const supabase = req.db;
+    const organizationId = req.user?.organization_id ?? null;
     const { id } = req.params;
     const { action_type, notes, outcome } = req.body;
 
-    const { data: entry } = await supabase.from('drop_off_watchlist').select('action_history').eq('id', id).single();
+    let entryQ = supabase.from('drop_off_watchlist').select('action_history').eq('id', id);
+    if (organizationId) entryQ = entryQ.eq('organization_id', organizationId);
+    const { data: entry } = await entryQ.single();
     if (!entry) return res.status(404).json({ error: 'Watchlist entry not found' });
 
     const history = entry.action_history || [];
@@ -77,7 +90,7 @@ const recordAction = async (req, res) => {
     const { data, error } = await supabase.from('drop_off_watchlist').update(updates).eq('id', id).select('*').single();
     if (error) throw error;
 
-    await auditLog({ user_id: req.user.id, role_id: req.user.role_id, action: 'DROPOFF_ACTION', module: 'DropOff', entity_type: 'drop_off_watchlist', entity_id: id, new_data: { action_type, outcome } });
+    await auditLog({ user_id: req.user.id, role_id: req.user.role_id, organization_id: req.user.organization_id || null, action: 'DROPOFF_ACTION', module: 'DropOff', entity_type: 'drop_off_watchlist', entity_id: id, new_data: { action_type, outcome } });
     return res.json({ message: 'Action recorded', entry: data });
   } catch (err) {
     return res.status(500).json({ error: err.message });
@@ -88,7 +101,10 @@ const recordAction = async (req, res) => {
 const getOutcomeSummary = async (req, res) => {
   try {
     const supabase = req.db;
-    const { data, error } = await supabase.from('drop_off_watchlist').select('outcome, risk_level');
+    const organizationId = req.user?.organization_id ?? null;
+    let q = supabase.from('drop_off_watchlist').select('outcome, risk_level');
+    if (organizationId) q = q.eq('organization_id', organizationId);
+    const { data, error } = await q;
     if (error) throw error;
 
     const summary = (data || []).reduce((acc, d) => {
@@ -110,10 +126,13 @@ const getOutcomeSummary = async (req, res) => {
 const addToWatchlist = async (req, res) => {
   try {
     const supabase = req.db;
+    const organizationId = req.user?.organization_id ?? null;
     const { patient_id, risk_reason, risk_level, risk_score, trigger_type } = req.body;
     if (!patient_id) return res.status(400).json({ error: 'patient_id required' });
 
-    const { data: existing } = await supabase.from('drop_off_watchlist').select('id').eq('patient_id', patient_id).in('outcome', ['at_risk', 'still_at_risk']).maybeSingle();
+    let existQ = supabase.from('drop_off_watchlist').select('id').eq('patient_id', patient_id).in('outcome', ['at_risk', 'still_at_risk']);
+    if (organizationId) existQ = existQ.eq('organization_id', organizationId);
+    const { data: existing } = await existQ.maybeSingle();
     if (existing) return res.status(409).json({ error: 'Patient already on watchlist', id: existing.id });
 
     const { data, error } = await supabase.from('drop_off_watchlist').insert([{
@@ -124,12 +143,13 @@ const addToWatchlist = async (req, res) => {
       trigger_type: trigger_type || 'manual',
       outcome: 'at_risk',
       action_history: [],
+      organization_id: organizationId,
       created_by: req.user.id,
       created_at: new Date().toISOString()
     }]).select('*').single();
 
     if (error) throw error;
-    await auditLog({ user_id: req.user.id, role_id: req.user.role_id, action: 'ADD_TO_WATCHLIST', module: 'DropOff', entity_type: 'drop_off_watchlist', entity_id: data.id });
+    await auditLog({ user_id: req.user.id, role_id: req.user.role_id, organization_id: req.user.organization_id || null, action: 'ADD_TO_WATCHLIST', module: 'DropOff', entity_type: 'drop_off_watchlist', entity_id: data.id });
     return res.status(201).json({ message: 'Patient added to watchlist', entry: data });
   } catch (err) {
     return res.status(500).json({ error: err.message });

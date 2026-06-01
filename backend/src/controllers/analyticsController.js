@@ -20,21 +20,23 @@ const attachDoctorNames = async (rows, doctorIdField = 'doctor_id', db) => {
 const getDashboard = async (req, res) => {
   try {
     const supabase = req.db;
+    const organizationId = req.user?.organization_id ?? null;
+    const orgF = (q) => organizationId ? q.eq('organization_id', organizationId) : q;
     const { date_from, date_to, branch_id, department_id, doctor_id } = req.query;
     const today = new Date().toISOString().split('T')[0];
     const from = date_from || today;
     const to = date_to || today;
 
     const [patients, appointments, consultations, invoices, payments, labOrders, pharmacySales, missedFollowups, dropoffAtRisk] = await Promise.all([
-      supabase.from('patients').select('id', { count: 'exact', head: true }).eq('is_archived', false),
-      supabase.from('appointments').select('id, status', { count: 'exact' }).gte('appointment_date', from).lte('appointment_date', to),
-      supabase.from('consultations').select('id, consultation_date', { count: 'exact' }).gte('consultation_date', from).lte('consultation_date', to),
-      supabase.from('invoices').select('total_amount, paid_amount, status, invoice_type').gte('created_at', `${from}T00:00:00`).lte('created_at', `${to}T23:59:59`),
-      supabase.from('payments').select('amount, payment_mode').gte('payment_date', `${from}T00:00:00`).lte('payment_date', `${to}T23:59:59`),
-      supabase.from('lab_orders').select('id, status', { count: 'exact' }).gte('ordered_at', `${from}T00:00:00`).lte('ordered_at', `${to}T23:59:59`),
-      supabase.from('pharmacy_invoices').select('total_amount, status').gte('created_at', `${from}T00:00:00`).lte('created_at', `${to}T23:59:59`),
-      supabase.from('follow_up_plans').select('id', { count: 'exact', head: true }).eq('status', 'scheduled').lt('follow_up_date', today),
-      supabase.from('drop_off_watchlist').select('id', { count: 'exact', head: true }).in('risk_level', ['high', 'critical']).eq('outcome', 'at_risk'),
+      orgF(supabase.from('patients').select('id', { count: 'exact', head: true }).eq('is_archived', false)),
+      orgF(supabase.from('appointments').select('id, status', { count: 'exact' }).gte('appointment_date', from).lte('appointment_date', to)),
+      orgF(supabase.from('consultations').select('id, consultation_date', { count: 'exact' }).gte('consultation_date', from).lte('consultation_date', to)),
+      orgF(supabase.from('invoices').select('total_amount, paid_amount, status, invoice_type').gte('created_at', `${from}T00:00:00`).lte('created_at', `${to}T23:59:59`)),
+      orgF(supabase.from('payments').select('amount, payment_mode').gte('payment_date', `${from}T00:00:00`).lte('payment_date', `${to}T23:59:59`)),
+      orgF(supabase.from('lab_orders').select('id, status', { count: 'exact' }).gte('ordered_at', `${from}T00:00:00`).lte('ordered_at', `${to}T23:59:59`)),
+      orgF(supabase.from('pharmacy_invoices').select('total_amount, status').gte('created_at', `${from}T00:00:00`).lte('created_at', `${to}T23:59:59`)),
+      orgF(supabase.from('follow_up_plans').select('id', { count: 'exact', head: true }).eq('status', 'scheduled').lt('follow_up_date', today)),
+      orgF(supabase.from('drop_off_watchlist').select('id', { count: 'exact', head: true }).in('risk_level', ['high', 'critical']).eq('outcome', 'at_risk')),
     ]);
 
     const apptData = appointments.data || [];
@@ -86,10 +88,13 @@ const getRevenueAnalytics = async (req, res) => {
     const from = date_from || today;
     const to = date_to || today;
 
-    const { data: invoices, error } = await supabase.from('invoices')
+    const organizationId = req.user?.organization_id ?? null;
+    let invQ = supabase.from('invoices')
       .select('total_amount, paid_amount, status, invoice_type, consultation_id')
       .gte('created_at', `${from}T00:00:00`)
       .lte('created_at', `${to}T23:59:59`);
+    if (organizationId) invQ = invQ.eq('organization_id', organizationId);
+    const { data: invoices, error } = await invQ;
 
     if (error) throw error;
 
@@ -129,11 +134,14 @@ const getPatientVolume = async (req, res) => {
     const today = new Date().toISOString().split('T')[0];
     const thirtyDaysAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
 
-    const { data, error } = await supabase.from('appointments')
+    const organizationId = req.user?.organization_id ?? null;
+    let volQ = supabase.from('appointments')
       .select('appointment_date, status')
       .gte('appointment_date', date_from || thirtyDaysAgo)
       .lte('appointment_date', date_to || today)
       .order('appointment_date', { ascending: true });
+    if (organizationId) volQ = volQ.eq('organization_id', organizationId);
+    const { data, error } = await volQ;
 
     if (error) throw error;
 
@@ -159,10 +167,13 @@ const getDoctorPerformance = async (req, res) => {
     const today = new Date().toISOString().split('T')[0];
     const thirtyDaysAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
 
-    const { data: consultations, error } = await supabase.from('consultations')
+    const organizationId = req.user?.organization_id ?? null;
+    let perfQ = supabase.from('consultations')
       .select('id, doctor_id')
       .gte('consultation_date', date_from || thirtyDaysAgo)
       .lte('consultation_date', date_to || today);
+    if (organizationId) perfQ = perfQ.eq('organization_id', organizationId);
+    const { data: consultations, error } = await perfQ;
 
     if (error) throw error;
 
@@ -205,10 +216,13 @@ const getLabSummary = async (req, res) => {
     const { date_from, date_to } = req.query;
     const today = new Date().toISOString().split('T')[0];
 
-    const { data, error } = await supabase.from('lab_orders')
+    const organizationId = req.user?.organization_id ?? null;
+    let labQ = supabase.from('lab_orders')
       .select('status, test_name, urgency')
       .gte('ordered_at', `${date_from || today}T00:00:00`)
       .lte('ordered_at', `${date_to || today}T23:59:59`);
+    if (organizationId) labQ = labQ.eq('organization_id', organizationId);
+    const { data, error } = await labQ;
 
     if (error) throw error;
 
@@ -235,10 +249,13 @@ const getPharmacySummary = async (req, res) => {
     const { date_from, date_to } = req.query;
     const today = new Date().toISOString().split('T')[0];
 
-    const { data, error } = await supabase.from('pharmacy_invoices')
+    const organizationId = req.user?.organization_id ?? null;
+    let phQ = supabase.from('pharmacy_invoices')
       .select('status, total_amount, amount_paid')
       .gte('created_at', `${date_from || today}T00:00:00`)
       .lte('created_at', `${date_to || today}T23:59:59`);
+    if (organizationId) phQ = phQ.eq('organization_id', organizationId);
+    const { data, error } = await phQ;
 
     if (error) throw error;
 
@@ -259,10 +276,13 @@ const getFollowUpSummary = async (req, res) => {
     const { date_from, date_to } = req.query;
     const today = new Date().toISOString().split('T')[0];
 
-    const { data, error } = await supabase.from('follow_up_plans')
+    const organizationId = req.user?.organization_id ?? null;
+    let fuQ = supabase.from('follow_up_plans')
       .select('status, disease_tag')
       .gte('follow_up_date', date_from || new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString().split('T')[0])
       .lte('follow_up_date', date_to || today);
+    if (organizationId) fuQ = fuQ.eq('organization_id', organizationId);
+    const { data, error } = await fuQ;
 
     if (error) throw error;
 

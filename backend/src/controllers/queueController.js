@@ -73,7 +73,7 @@ const generateQueueToken = async (req, res) => {
       await supabase.from('appointments').update({ queue_status: 'checked_in', token_number, checked_in_at: new Date().toISOString() }).eq('id', appointment_id);
     }
 
-    await auditLog({ user_id: req.user.id, role_id: req.user.role_id, action: 'GENERATE_TOKEN', module: 'Queue', entity_type: 'queue_token', entity_id: data.id });
+    await auditLog({ user_id: req.user.id, role_id: req.user.role_id, organization_id: req.user.organization_id || null, action: 'GENERATE_TOKEN', module: 'Queue', entity_type: 'queue_token', entity_id: data.id });
     return res.status(201).json({ message: 'Token generated', token: data });
   } catch (err) {
     return res.status(500).json({ error: err.message });
@@ -172,7 +172,7 @@ const callNext = async (req, res) => {
       await supabase.from('appointments').update({ queue_status: 'called', called_at: new Date().toISOString() }).eq('id', next.appointment_id);
     }
 
-    await auditLog({ user_id: req.user.id, role_id: req.user.role_id, action: 'CALL_NEXT', module: 'Queue', entity_type: 'queue_token', entity_id: next.id });
+    await auditLog({ user_id: req.user.id, role_id: req.user.role_id, organization_id: req.user.organization_id || null, action: 'CALL_NEXT', module: 'Queue', entity_type: 'queue_token', entity_id: next.id });
     return res.json({ message: 'Next patient called', token: data });
   } catch (err) {
     return res.status(500).json({ error: err.message });
@@ -195,7 +195,7 @@ const updateTokenStatus = async (req, res) => {
     const { data, error } = await supabase.from('queue_tokens').update(updates).eq('id', id).select('*').single();
     if (error) throw error;
 
-    await auditLog({ user_id: req.user.id, role_id: req.user.role_id, action: 'UPDATE_TOKEN_STATUS', module: 'Queue', entity_type: 'queue_token', entity_id: id, new_data: { status } });
+    await auditLog({ user_id: req.user.id, role_id: req.user.role_id, organization_id: req.user.organization_id || null, action: 'UPDATE_TOKEN_STATUS', module: 'Queue', entity_type: 'queue_token', entity_id: id, new_data: { status } });
     return res.json({ message: 'Token status updated', token: data });
   } catch (err) {
     return res.status(500).json({ error: err.message });

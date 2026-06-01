@@ -67,7 +67,7 @@ const createConsultation = async (req, res) => {
       }]);
     }
 
-    await auditLog({ user_id: req.user.id, role_id: req.user.role_id, action: 'CREATE_CONSULTATION', module: 'Consultation', entity_type: 'consultation', entity_id: data.id });
+    await auditLog({ user_id: req.user.id, role_id: req.user.role_id, organization_id: req.user.organization_id || null, action: 'CREATE_CONSULTATION', module: 'Consultation', entity_type: 'consultation', entity_id: data.id });
     return res.status(201).json({ message: 'Consultation created', consultation: data });
   } catch (err) {
     return res.status(500).json({ error: err.message });
@@ -85,7 +85,7 @@ const updateConsultation = async (req, res) => {
     if (organizationId) updateQuery = updateQuery.eq('organization_id', organizationId);
     const { data, error } = await updateQuery.select('*').single();
     if (error) throw error;
-    await auditLog({ user_id: req.user.id, role_id: req.user.role_id, action: 'UPDATE_CONSULTATION', module: 'Consultation', entity_type: 'consultation', entity_id: id, old_data: old, new_data: req.body });
+    await auditLog({ user_id: req.user.id, role_id: req.user.role_id, organization_id: req.user.organization_id || null, action: 'UPDATE_CONSULTATION', module: 'Consultation', entity_type: 'consultation', entity_id: id, old_data: old, new_data: req.body });
     return res.json({ message: 'Consultation updated', consultation: data });
   } catch (err) {
     return res.status(500).json({ error: err.message });
@@ -217,7 +217,7 @@ const createPrescription = async (req, res) => {
     const { data: itemData, error: itemError } = await supabase.from('prescription_items').insert(itemRows).select('*');
     if (itemError) throw itemError;
 
-    await auditLog({ user_id: req.user.id, role_id: req.user.role_id, action: 'CREATE_PRESCRIPTION', module: 'Consultation', entity_type: 'prescription', entity_id: pres.id });
+    await auditLog({ user_id: req.user.id, role_id: req.user.role_id, organization_id: req.user.organization_id || null, action: 'CREATE_PRESCRIPTION', module: 'Consultation', entity_type: 'prescription', entity_id: pres.id });
     return res.status(201).json({ message: 'Prescription created', prescription: { ...pres, items: itemData } });
   } catch (err) {
     return res.status(500).json({ error: err.message });
@@ -250,7 +250,7 @@ const createLabOrder = async (req, res) => {
     const { data, error } = await supabase.from('lab_orders').insert(labOrderRows).select('*');
     if (error) throw error;
 
-    await auditLog({ user_id: req.user.id, role_id: req.user.role_id, action: 'CREATE_LAB_ORDER', module: 'Consultation', entity_type: 'lab_order', entity_id: data[0]?.id });
+    await auditLog({ user_id: req.user.id, role_id: req.user.role_id, organization_id: req.user.organization_id || null, action: 'CREATE_LAB_ORDER', module: 'Consultation', entity_type: 'lab_order', entity_id: data[0]?.id });
     return res.status(201).json({ message: 'Lab orders created', lab_orders: data });
   } catch (err) {
     return res.status(500).json({ error: err.message });

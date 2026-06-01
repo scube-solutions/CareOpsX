@@ -77,7 +77,7 @@ const addMedicine = async (req, res) => {
     }]).select('*').single();
 
     if (error) throw error;
-    await auditLog({ user_id: req.user.id, role_id: req.user.role_id, action: 'ADD_MEDICINE', module: 'Pharmacy', entity_type: 'pharmacy_inventory', entity_id: data.id });
+    await auditLog({ user_id: req.user.id, role_id: req.user.role_id, organization_id: req.user.organization_id || null, action: 'ADD_MEDICINE', module: 'Pharmacy', entity_type: 'pharmacy_inventory', entity_id: data.id });
     return res.status(201).json({ message: 'Medicine added', medicine: data });
   } catch (err) {
     return res.status(500).json({ error: err.message });
@@ -87,9 +87,13 @@ const addMedicine = async (req, res) => {
 const updateMedicine = async (req, res) => {
   try {
     const supabase = req.db;
-    const { data, error } = await supabase.from('pharmacy_inventory').update({ ...req.body, updated_by: req.user.id, updated_at: new Date().toISOString() }).eq('id', req.params.id).select('*').single();
+    const organizationId = getUserOrganizationId(req);
+    let updQ = supabase.from('pharmacy_inventory').update({ ...req.body, updated_by: req.user.id, updated_at: new Date().toISOString() }).eq('id', req.params.id);
+    if (organizationId) updQ = updQ.eq('organization_id', organizationId);
+    const { data, error } = await updQ.select('*').single();
     if (error) throw error;
-    await auditLog({ user_id: req.user.id, role_id: req.user.role_id, action: 'UPDATE_MEDICINE', module: 'Pharmacy', entity_type: 'pharmacy_inventory', entity_id: req.params.id });
+    if (!data) return res.status(404).json({ error: 'Medicine not found' });
+    await auditLog({ user_id: req.user.id, role_id: req.user.role_id, organization_id: req.user.organization_id || null, action: 'UPDATE_MEDICINE', module: 'Pharmacy', entity_type: 'pharmacy_inventory', entity_id: req.params.id });
     return res.json({ message: 'Medicine updated', medicine: data });
   } catch (err) {
     return res.status(500).json({ error: err.message });
@@ -99,11 +103,14 @@ const updateMedicine = async (req, res) => {
 const addStock = async (req, res) => {
   try {
     const supabase = req.db;
+    const organizationId = getUserOrganizationId(req);
     const { id } = req.params;
     const { quantity, batch_number, expiry_date, unit_price, notes } = req.body;
     if (!quantity || quantity <= 0) return res.status(400).json({ error: 'quantity must be positive' });
 
-    const { data: med } = await supabase.from('pharmacy_inventory').select('current_stock').eq('id', id).single();
+    let medQ = supabase.from('pharmacy_inventory').select('current_stock').eq('id', id);
+    if (organizationId) medQ = medQ.eq('organization_id', organizationId);
+    const { data: med } = await medQ.single();
     if (!med) return res.status(404).json({ error: 'Medicine not found' });
 
     const newStock = (med.current_stock || 0) + parseInt(quantity);
@@ -112,10 +119,12 @@ const addStock = async (req, res) => {
     if (expiry_date) updates.expiry_date = expiry_date;
     if (unit_price) updates.unit_price = unit_price;
 
-    const { data, error } = await supabase.from('pharmacy_inventory').update(updates).eq('id', id).select('*').single();
+    let stockQ = supabase.from('pharmacy_inventory').update(updates).eq('id', id);
+    if (organizationId) stockQ = stockQ.eq('organization_id', organizationId);
+    const { data, error } = await stockQ.select('*').single();
     if (error) throw error;
 
-    await auditLog({ user_id: req.user.id, role_id: req.user.role_id, action: 'ADD_STOCK', module: 'Pharmacy', entity_type: 'pharmacy_inventory', entity_id: id, new_data: { quantity_added: quantity, notes } });
+    await auditLog({ user_id: req.user.id, role_id: req.user.role_id, organization_id: req.user.organization_id || null, action: 'ADD_STOCK', module: 'Pharmacy', entity_type: 'pharmacy_inventory', entity_id: id, new_data: { quantity_added: quantity, notes } });
     return res.json({ message: `Stock updated. New stock: ${newStock}`, medicine: data });
   } catch (err) {
     return res.status(500).json({ error: err.message });
@@ -194,7 +203,7 @@ const createPharmacyInvoice = async (req, res) => {
     const { data: itemData, error: itemErr } = await supabase.from('pharmacy_invoice_items').insert(itemRows).select('*');
     if (itemErr) throw itemErr;
 
-    await auditLog({ user_id: req.user.id, role_id: req.user.role_id, action: 'CREATE_PHARMACY_INVOICE', module: 'Pharmacy', entity_type: 'pharmacy_invoice', entity_id: inv.id });
+    await auditLog({ user_id: req.user.id, role_id: req.user.role_id, organization_id: req.user.organization_id || null, action: 'CREATE_PHARMACY_INVOICE', module: 'Pharmacy', entity_type: 'pharmacy_invoice', entity_id: inv.id });
     return res.status(201).json({ message: 'Invoice created', invoice: { ...inv, items: itemData } });
   } catch (err) {
     return res.status(500).json({ error: err.message });
@@ -204,10 +213,13 @@ const createPharmacyInvoice = async (req, res) => {
 const dispensePharmacyInvoice = async (req, res) => {
   try {
     const supabase = req.db;
+    const organizationId = getUserOrganizationId(req);
     const { id } = req.params;
     const { payment_mode, amount_paid } = req.body;
 
-    const { data: inv } = await supabase.from('pharmacy_invoices').select('*, pharmacy_invoice_items(*)').eq('id', id).single();
+    let invQ = supabase.from('pharmacy_invoices').select('*, pharmacy_invoice_items(*)').eq('id', id);
+    if (organizationId) invQ = invQ.eq('organization_id', organizationId);
+    const { data: inv } = await invQ.single();
     if (!inv) return res.status(404).json({ error: 'Invoice not found' });
     if (inv.status === 'dispensed') return res.status(400).json({ error: 'Already dispensed' });
 
@@ -227,7 +239,7 @@ const dispensePharmacyInvoice = async (req, res) => {
     }).eq('id', id).select('*').single();
 
     if (error) throw error;
-    await auditLog({ user_id: req.user.id, role_id: req.user.role_id, action: 'DISPENSE_PHARMACY', module: 'Pharmacy', entity_type: 'pharmacy_invoice', entity_id: id });
+    await auditLog({ user_id: req.user.id, role_id: req.user.role_id, organization_id: req.user.organization_id || null, action: 'DISPENSE_PHARMACY', module: 'Pharmacy', entity_type: 'pharmacy_invoice', entity_id: id });
     return res.json({ message: 'Medicines dispensed', invoice: data });
   } catch (err) {
     return res.status(500).json({ error: err.message });
@@ -384,7 +396,7 @@ const bulkImportMedicines = async (req, res) => {
     const { data, error } = await supabase.from('pharmacy_inventory').insert(rows).select('id, medicine_name');
     if (error) throw error;
 
-    await auditLog({ user_id: req.user.id, role_id: req.user.role_id, action: 'BULK_IMPORT_MEDICINES', module: 'Pharmacy', entity_type: 'pharmacy_inventory', new_data: { count: data.length } });
+    await auditLog({ user_id: req.user.id, role_id: req.user.role_id, organization_id: req.user.organization_id || null, action: 'BULK_IMPORT_MEDICINES', module: 'Pharmacy', entity_type: 'pharmacy_inventory', new_data: { count: data.length } });
     return res.json({ message: `${data.length} medicine${data.length !== 1 ? 's' : ''} imported successfully`, count: data.length });
   } catch (err) {
     return res.status(500).json({ error: err.message });

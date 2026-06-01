@@ -30,7 +30,7 @@ const upsertHospitalProfile = async (req, res) => {
       if (error) throw error;
       result = data;
     }
-    await auditLog({ user_id: req.user.id, role_id: req.user.role_id, action: 'UPSERT', module: 'Admin', entity_type: 'hospital_profile', entity_id: result.id });
+    await auditLog({ user_id: req.user.id, role_id: req.user.role_id, organization_id: req.user.organization_id || null, action: 'UPSERT', module: 'Admin', entity_type: 'hospital_profile', entity_id: result.id });
     return res.json({ message: 'Hospital profile saved', profile: result });
   } catch (err) {
     return res.status(500).json({ error: err.message });
@@ -56,7 +56,7 @@ const createBranch = async (req, res) => {
     const { organizationId } = await getOrganizationContext(req);
     const { data, error } = await supabase.from('branches').insert([{ ...req.body, organization_id: organizationId, created_by: req.user.id }]).select('*').single();
     if (error) throw error;
-    await auditLog({ user_id: req.user.id, role_id: req.user.role_id, action: 'CREATE', module: 'Admin', entity_type: 'branch', entity_id: data.id });
+    await auditLog({ user_id: req.user.id, role_id: req.user.role_id, organization_id: req.user.organization_id || null, action: 'CREATE', module: 'Admin', entity_type: 'branch', entity_id: data.id });
     return res.status(201).json({ message: 'Branch created', branch: data });
   } catch (err) {
     return res.status(500).json({ error: err.message });
@@ -69,7 +69,7 @@ const updateBranch = async (req, res) => {
     const { organizationId } = await getOrganizationContext(req);
     const { data, error } = await supabase.from('branches').update({ ...req.body, updated_by: req.user.id, updated_at: new Date().toISOString() }).eq('id', req.params.id).eq('organization_id', organizationId).select('*').single();
     if (error) throw error;
-    await auditLog({ user_id: req.user.id, role_id: req.user.role_id, action: 'UPDATE', module: 'Admin', entity_type: 'branch', entity_id: req.params.id });
+    await auditLog({ user_id: req.user.id, role_id: req.user.role_id, organization_id: req.user.organization_id || null, action: 'UPDATE', module: 'Admin', entity_type: 'branch', entity_id: req.params.id });
     return res.json({ message: 'Branch updated', branch: data });
   } catch (err) {
     return res.status(500).json({ error: err.message });
@@ -82,7 +82,7 @@ const deleteBranch = async (req, res) => {
     const { organizationId } = await getOrganizationContext(req);
     const { error } = await supabase.from('branches').update({ is_active: false, updated_by: req.user.id }).eq('id', req.params.id).eq('organization_id', organizationId);
     if (error) throw error;
-    await auditLog({ user_id: req.user.id, role_id: req.user.role_id, action: 'DEACTIVATE', module: 'Admin', entity_type: 'branch', entity_id: req.params.id });
+    await auditLog({ user_id: req.user.id, role_id: req.user.role_id, organization_id: req.user.organization_id || null, action: 'DEACTIVATE', module: 'Admin', entity_type: 'branch', entity_id: req.params.id });
     return res.json({ message: 'Branch deactivated' });
   } catch (err) {
     return res.status(500).json({ error: err.message });
@@ -114,7 +114,7 @@ const createDepartment = async (req, res) => {
     if (existing) return res.status(409).json({ error: 'Department name or code already exists' });
     const { data, error } = await supabase.from('departments').insert([{ ...req.body, organization_id: organizationId, is_active: true, created_by: req.user.id }]).select('*').single();
     if (error) throw error;
-    await auditLog({ user_id: req.user.id, role_id: req.user.role_id, action: 'CREATE', module: 'Admin', entity_type: 'department', entity_id: data.id });
+    await auditLog({ user_id: req.user.id, role_id: req.user.role_id, organization_id: req.user.organization_id || null, action: 'CREATE', module: 'Admin', entity_type: 'department', entity_id: data.id });
     return res.status(201).json({ message: 'Department created', department: data });
   } catch (err) {
     return res.status(500).json({ error: err.message });
@@ -127,7 +127,7 @@ const updateDepartment = async (req, res) => {
     const { organizationId } = await getOrganizationContext(req);
     const { data, error } = await supabase.from('departments').update({ ...req.body, updated_by: req.user.id, updated_at: new Date().toISOString() }).eq('id', req.params.id).eq('organization_id', organizationId).select('*').single();
     if (error) throw error;
-    await auditLog({ user_id: req.user.id, role_id: req.user.role_id, action: 'UPDATE', module: 'Admin', entity_type: 'department', entity_id: req.params.id });
+    await auditLog({ user_id: req.user.id, role_id: req.user.role_id, organization_id: req.user.organization_id || null, action: 'UPDATE', module: 'Admin', entity_type: 'department', entity_id: req.params.id });
     return res.json({ message: 'Department updated', department: data });
   } catch (err) {
     return res.status(500).json({ error: err.message });
@@ -142,7 +142,7 @@ const toggleDepartment = async (req, res) => {
     if (!dept) return res.status(404).json({ error: 'Department not found' });
     const { data, error } = await supabase.from('departments').update({ is_active: !dept.is_active, updated_by: req.user.id }).eq('id', req.params.id).eq('organization_id', organizationId).select('*').single();
     if (error) throw error;
-    await auditLog({ user_id: req.user.id, role_id: req.user.role_id, action: data.is_active ? 'ACTIVATE' : 'DEACTIVATE', module: 'Admin', entity_type: 'department', entity_id: req.params.id });
+    await auditLog({ user_id: req.user.id, role_id: req.user.role_id, organization_id: req.user.organization_id || null, action: data.is_active ? 'ACTIVATE' : 'DEACTIVATE', module: 'Admin', entity_type: 'department', entity_id: req.params.id });
     return res.json({ message: `Department ${data.is_active ? 'activated' : 'deactivated'}`, department: data });
   } catch (err) {
     return res.status(500).json({ error: err.message });
@@ -208,7 +208,7 @@ const createDoctorLeave = async (req, res) => {
     const { organizationId } = await getOrganizationContext(req);
     const { data, error } = await supabase.from('doctor_leaves').insert([{ ...req.body, organization_id: organizationId, created_by: req.user.id }]).select('*').single();
     if (error) throw error;
-    await auditLog({ user_id: req.user.id, role_id: req.user.role_id, action: 'CREATE', module: 'Admin', entity_type: 'doctor_leave', entity_id: data.id });
+    await auditLog({ user_id: req.user.id, role_id: req.user.role_id, organization_id: req.user.organization_id || null, action: 'CREATE', module: 'Admin', entity_type: 'doctor_leave', entity_id: data.id });
     return res.status(201).json({ message: 'Leave created', leave: data });
   } catch (err) {
     return res.status(500).json({ error: err.message });
@@ -262,7 +262,7 @@ const createUser = async (req, res) => {
     if (!seatCheck.ok) return res.status(409).json({ error: seatCheck.message });
     const { data, error } = await supabase.from('users').insert([{ first_name, last_name, email, phone: phone || null, password_hash, role_id: primaryRole, roles: userRoles, branch_id: branch_id || null, organization_id: organizationId, is_active: true, created_by: req.user.id }]).select('id, first_name, last_name, email, phone, role_id, roles, is_active, branch_id, organization_id, created_at').single();
     if (error) throw error;
-    await auditLog({ user_id: req.user.id, role_id: req.user.role_id, action: 'CREATE_USER', module: 'Admin', entity_type: 'user', entity_id: data.id });
+    await auditLog({ user_id: req.user.id, role_id: req.user.role_id, organization_id: req.user.organization_id || null, action: 'CREATE_USER', module: 'Admin', entity_type: 'user', entity_id: data.id });
     return res.status(201).json({ message: 'User created', user: data });
   } catch (err) {
     return res.status(500).json({ error: err.message });
@@ -289,7 +289,7 @@ const updateUser = async (req, res) => {
     }
     const { data, error } = await supabase.from('users').update(payload).eq('id', req.params.id).eq('organization_id', organizationId).select('id, first_name, last_name, email, phone, role_id, roles, is_active, branch_id').single();
     if (error) throw error;
-    await auditLog({ user_id: req.user.id, role_id: req.user.role_id, action: 'UPDATE_USER', module: 'Admin', entity_type: 'user', entity_id: req.params.id });
+    await auditLog({ user_id: req.user.id, role_id: req.user.role_id, organization_id: req.user.organization_id || null, action: 'UPDATE_USER', module: 'Admin', entity_type: 'user', entity_id: req.params.id });
     return res.json({ message: 'User updated', user: data });
   } catch (err) {
     return res.status(500).json({ error: err.message });
@@ -304,7 +304,7 @@ const toggleUserActive = async (req, res) => {
     if (!user) return res.status(404).json({ error: 'User not found' });
     const { data, error } = await supabase.from('users').update({ is_active: !user.is_active, updated_by: req.user.id }).eq('id', req.params.id).eq('organization_id', organizationId).select('id, is_active').single();
     if (error) throw error;
-    await auditLog({ user_id: req.user.id, role_id: req.user.role_id, action: data.is_active ? 'UNLOCK_USER' : 'LOCK_USER', module: 'Admin', entity_type: 'user', entity_id: req.params.id });
+    await auditLog({ user_id: req.user.id, role_id: req.user.role_id, organization_id: req.user.organization_id || null, action: data.is_active ? 'UNLOCK_USER' : 'LOCK_USER', module: 'Admin', entity_type: 'user', entity_id: req.params.id });
     return res.json({ message: `User ${data.is_active ? 'activated' : 'locked'}`, user: data });
   } catch (err) {
     return res.status(500).json({ error: err.message });
@@ -369,7 +369,7 @@ const deleteUser = async (req, res) => {
     }
     const { error } = await supabase.from('users').delete().eq('id', id).eq('organization_id', organizationId);
     if (error) throw error;
-    await auditLog({ user_id: req.user.id, role_id: req.user.role_id, action: 'DELETE_USER', module: 'Admin', entity_type: 'user', entity_id: id });
+    await auditLog({ user_id: req.user.id, role_id: req.user.role_id, organization_id: req.user.organization_id || null, action: 'DELETE_USER', module: 'Admin', entity_type: 'user', entity_id: id });
     return res.json({ message: `User ${user.first_name} ${user.last_name} deleted` });
   } catch (err) {
     return res.status(500).json({ error: err.message });
@@ -405,7 +405,7 @@ const bulkDeleteUsers = async (req, res) => {
       const { error } = await supabase.from('users').delete().eq('id', id).eq('organization_id', organizationId);
       if (error) { skipped.push({ id, reason: error.message }); continue; }
       deleted.push(id);
-      await auditLog({ user_id: req.user.id, role_id: req.user.role_id, action: 'DELETE_USER', module: 'Admin', entity_type: 'user', entity_id: id });
+      await auditLog({ user_id: req.user.id, role_id: req.user.role_id, organization_id: req.user.organization_id || null, action: 'DELETE_USER', module: 'Admin', entity_type: 'user', entity_id: id });
     }
 
     return res.json({ message: `${deleted.length} user(s) deleted`, deleted, skipped });
@@ -424,7 +424,7 @@ const resetUserPassword = async (req, res) => {
     const password_hash = await bcrypt.hash(new_password, 10);
     const { error } = await supabase.from('users').update({ password_hash, force_password_change: true, updated_by: req.user.id }).eq('id', req.params.id).eq('organization_id', organizationId);
     if (error) throw error;
-    await auditLog({ user_id: req.user.id, role_id: req.user.role_id, action: 'RESET_PASSWORD', module: 'Admin', entity_type: 'user', entity_id: req.params.id });
+    await auditLog({ user_id: req.user.id, role_id: req.user.role_id, organization_id: req.user.organization_id || null, action: 'RESET_PASSWORD', module: 'Admin', entity_type: 'user', entity_id: req.params.id });
     return res.json({ message: 'Password reset successfully' });
   } catch (err) {
     return res.status(500).json({ error: err.message });

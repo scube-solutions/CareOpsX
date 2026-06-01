@@ -4,8 +4,10 @@ const { auditLog } = require('../middlewares/audit');
 const getTemplates = async (req, res) => {
   try {
     const supabase = req.db;
+    const organizationId = req.user?.organization_id ?? null;
     const { channel, event_type } = req.query;
     let query = supabase.from('notification_templates').select('*').eq('is_active', true).order('event_type');
+    if (organizationId) query = query.eq('organization_id', organizationId);
     if (channel) query = query.eq('channel', channel);
     if (event_type) query = query.eq('event_type', event_type);
     const { data, error } = await query;
@@ -19,7 +21,8 @@ const getTemplates = async (req, res) => {
 const createTemplate = async (req, res) => {
   try {
     const supabase = req.db;
-    const { data, error } = await supabase.from('notification_templates').insert([{ ...req.body, is_active: true, created_by: req.user.id, created_at: new Date().toISOString() }]).select('*').single();
+    const organizationId = req.user?.organization_id ?? null;
+    const { data, error } = await supabase.from('notification_templates').insert([{ ...req.body, organization_id: organizationId, is_active: true, created_by: req.user.id, created_at: new Date().toISOString() }]).select('*').single();
     if (error) throw error;
     return res.status(201).json({ message: 'Template created', template: data });
   } catch (err) {
@@ -30,8 +33,12 @@ const createTemplate = async (req, res) => {
 const updateTemplate = async (req, res) => {
   try {
     const supabase = req.db;
-    const { data, error } = await supabase.from('notification_templates').update({ ...req.body, updated_by: req.user.id, updated_at: new Date().toISOString() }).eq('id', req.params.id).select('*').single();
+    const organizationId = req.user?.organization_id ?? null;
+    let q = supabase.from('notification_templates').update({ ...req.body, updated_by: req.user.id, updated_at: new Date().toISOString() }).eq('id', req.params.id);
+    if (organizationId) q = q.eq('organization_id', organizationId);
+    const { data, error } = await q.select('*').single();
     if (error) throw error;
+    if (!data) return res.status(404).json({ error: 'Template not found' });
     return res.json({ message: 'Template updated', template: data });
   } catch (err) {
     return res.status(500).json({ error: err.message });
@@ -54,6 +61,7 @@ const sendNotification = async (req, res) => {
       recipient_phone: recipient_phone || null,
       recipient_email: recipient_email || null,
       status: 'pending',
+      organization_id: req.user?.organization_id ?? null,
       sent_by: req.user.id,
       created_at: new Date().toISOString()
     }]).select('*').single();
@@ -88,6 +96,7 @@ const sendNotification = async (req, res) => {
 const getNotificationLogs = async (req, res) => {
   try {
     const supabase = req.db;
+    const organizationId = req.user?.organization_id ?? null;
     const { patient_id, status, channel, event_type, page = 1, limit = 30 } = req.query;
     const offset = (parseInt(page) - 1) * parseInt(limit);
 
@@ -96,6 +105,7 @@ const getNotificationLogs = async (req, res) => {
       .order('created_at', { ascending: false })
       .range(offset, offset + parseInt(limit) - 1);
 
+    if (organizationId) query = query.eq('organization_id', organizationId);
     if (patient_id) query = query.eq('patient_id', patient_id);
     if (status) query = query.eq('status', status);
     if (channel) query = query.eq('channel', channel);
@@ -113,8 +123,11 @@ const getNotificationLogs = async (req, res) => {
 const retryNotification = async (req, res) => {
   try {
     const supabase = req.db;
+    const organizationId = req.user?.organization_id ?? null;
     const { id } = req.params;
-    const { data: log } = await supabase.from('notification_logs').select('*').eq('id', id).single();
+    let logQ = supabase.from('notification_logs').select('*').eq('id', id);
+    if (organizationId) logQ = logQ.eq('organization_id', organizationId);
+    const { data: log } = await logQ.single();
     if (!log) return res.status(404).json({ error: 'Notification log not found' });
     if (log.status === 'sent' || log.status === 'delivered') return res.status(400).json({ error: 'Notification already delivered' });
 

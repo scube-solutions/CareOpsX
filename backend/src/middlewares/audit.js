@@ -6,12 +6,13 @@ const ROLES = {
   5: 'Receptionist', 6: 'LabStaff', 7: 'Pharmacist', 8: 'Reporting'
 };
 
-const auditLog = async ({ user_id, role_id, action, module, entity_type, entity_id, old_data, new_data, ip_address, description }) => {
+const auditLog = async ({ user_id, role_id, organization_id, action, module, entity_type, entity_id, old_data, new_data, ip_address, description }) => {
   try {
     await supabase.from('audit_logs').insert([{
       user_id: user_id || null,
       role_id: role_id || null,
       role_name: ROLES[role_id] || 'Unknown',
+      organization_id: organization_id || null,
       action,
       module,
       entity_type: entity_type || null,
@@ -38,6 +39,7 @@ const auditMiddleware = (module, action, entityType) => {
         auditLog({
           user_id: req.user.id,
           role_id: req.user.role_id,
+          organization_id: req.user.organization_id || null,
           action: action || req.method,
           module,
           entity_type: entityType || null,

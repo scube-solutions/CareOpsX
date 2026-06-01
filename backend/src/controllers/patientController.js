@@ -120,7 +120,7 @@ const createPatient = async (req, res) => {
     }]).select('*').single();
 
     if (error) throw error;
-    await auditLog({ user_id: req.user.id, role_id: req.user.role_id, action: 'CREATE_PATIENT', module: 'Patient', entity_type: 'patient', entity_id: data.id, new_data: req.body });
+    await auditLog({ user_id: req.user.id, role_id: req.user.role_id, organization_id: req.user.organization_id || null, action: 'CREATE_PATIENT', module: 'Patient', entity_type: 'patient', entity_id: data.id, new_data: req.body });
     return res.status(201).json({ message: 'Patient created', patient: data });
   } catch (err) {
     return res.status(500).json({ error: err.message });
@@ -139,7 +139,7 @@ const updatePatient = async (req, res) => {
     if (organizationId) updateQuery = updateQuery.eq('organization_id', organizationId);
     const { data, error } = await updateQuery.select('*').single();
     if (error) throw error;
-    await auditLog({ user_id: req.user.id, role_id: req.user.role_id, action: 'UPDATE_PATIENT', module: 'Patient', entity_type: 'patient', entity_id: id, old_data: old, new_data: req.body });
+    await auditLog({ user_id: req.user.id, role_id: req.user.role_id, organization_id: req.user.organization_id || null, action: 'UPDATE_PATIENT', module: 'Patient', entity_type: 'patient', entity_id: id, old_data: old, new_data: req.body });
     return res.json({ message: 'Patient updated', patient: data });
   } catch (err) {
     return res.status(500).json({ error: err.message });
@@ -156,7 +156,7 @@ const archivePatient = async (req, res) => {
     if (organizationId) archiveQuery = archiveQuery.eq('organization_id', organizationId);
     const { data, error } = await archiveQuery.select('id, patient_uid, is_archived').single();
     if (error) throw error;
-    await auditLog({ user_id: req.user.id, role_id: req.user.role_id, action: 'ARCHIVE_PATIENT', module: 'Patient', entity_type: 'patient', entity_id: id });
+    await auditLog({ user_id: req.user.id, role_id: req.user.role_id, organization_id: req.user.organization_id || null, action: 'ARCHIVE_PATIENT', module: 'Patient', entity_type: 'patient', entity_id: id });
     return res.json({ message: 'Patient archived', patient: data });
   } catch (err) {
     return res.status(500).json({ error: err.message });
@@ -179,7 +179,7 @@ const mergePatients = async (req, res) => {
     // Archive the duplicate
     await supabase.from('patients').update({ is_archived: true, merged_into: primary_patient_id, updated_by: req.user.id }).eq('id', duplicate_patient_id);
 
-    await auditLog({ user_id: req.user.id, role_id: req.user.role_id, action: 'MERGE_PATIENT', module: 'Patient', entity_type: 'patient', entity_id: primary_patient_id, description: `Merged patient ${duplicate_patient_id} into ${primary_patient_id}` });
+    await auditLog({ user_id: req.user.id, role_id: req.user.role_id, organization_id: req.user.organization_id || null, action: 'MERGE_PATIENT', module: 'Patient', entity_type: 'patient', entity_id: primary_patient_id, description: `Merged patient ${duplicate_patient_id} into ${primary_patient_id}` });
     return res.json({ message: 'Patients merged successfully' });
   } catch (err) {
     return res.status(500).json({ error: err.message });
@@ -195,7 +195,7 @@ const deletePatient = async (req, res) => {
     if (organizationId) deleteQuery = deleteQuery.eq('organization_id', organizationId);
     const { error } = await deleteQuery;
     if (error) throw error;
-    await auditLog({ user_id: req.user.id, role_id: req.user.role_id, action: 'DELETE_PATIENT', module: 'Patient', entity_type: 'patient', entity_id: req.params.id });
+    await auditLog({ user_id: req.user.id, role_id: req.user.role_id, organization_id: req.user.organization_id || null, action: 'DELETE_PATIENT', module: 'Patient', entity_type: 'patient', entity_id: req.params.id });
     return res.json({ message: 'Patient archived/deleted' });
   } catch (err) {
     return res.status(500).json({ error: err.message });
@@ -246,7 +246,7 @@ const updateMyProfile = async (req, res) => {
       await supabase.from('users').update(nameUpd).eq('id', req.user.id);
     }
 
-    await auditLog({ user_id: req.user.id, role_id: req.user.role_id, action: 'UPDATE_MY_PROFILE', module: 'Patient', entity_type: 'patient', entity_id: patient.id });
+    await auditLog({ user_id: req.user.id, role_id: req.user.role_id, organization_id: req.user.organization_id || null, action: 'UPDATE_MY_PROFILE', module: 'Patient', entity_type: 'patient', entity_id: patient.id });
     return res.json({ message: 'Profile updated', patient: data });
   } catch (err) {
     return res.status(500).json({ error: err.message });

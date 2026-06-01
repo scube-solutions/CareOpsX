@@ -3,6 +3,7 @@
 const getAuditLogs = async (req, res) => {
   try {
     const supabase = req.db;
+    const organizationId = req.user?.organization_id ?? null;
     const { user_id, module, action, entity_type, entity_id, date_from, date_to, page = 1, limit = 50 } = req.query;
     const offset = (parseInt(page) - 1) * parseInt(limit);
 
@@ -11,6 +12,7 @@ const getAuditLogs = async (req, res) => {
       .order('created_at', { ascending: false })
       .range(offset, offset + parseInt(limit) - 1);
 
+    if (organizationId) query = query.eq('organization_id', organizationId);
     if (user_id) query = query.eq('user_id', user_id);
     if (module) query = query.eq('module', module);
     if (action) query = query.ilike('action', `%${action}%`);
@@ -31,7 +33,10 @@ const getAuditLogs = async (req, res) => {
 const getAuditLogById = async (req, res) => {
   try {
     const supabase = req.db;
-    const { data, error } = await supabase.from('audit_logs').select('*').eq('id', req.params.id).single();
+    const organizationId = req.user?.organization_id ?? null;
+    let q = supabase.from('audit_logs').select('*').eq('id', req.params.id);
+    if (organizationId) q = q.eq('organization_id', organizationId);
+    const { data, error } = await q.single();
     if (error || !data) return res.status(404).json({ error: 'Audit log not found' });
     return res.json({ log: data });
   } catch (err) {
@@ -43,12 +48,15 @@ const getAuditLogById = async (req, res) => {
 const getActivitySummary = async (req, res) => {
   try {
     const supabase = req.db;
+    const organizationId = req.user?.organization_id ?? null;
     const today = new Date().toISOString().split('T')[0];
-    const { data, error } = await supabase.from('audit_logs')
+    let q = supabase.from('audit_logs')
       .select('action, module, role_name, created_at')
       .gte('created_at', `${today}T00:00:00`)
       .order('created_at', { ascending: false })
       .limit(100);
+    if (organizationId) q = q.eq('organization_id', organizationId);
+    const { data, error } = await q;
 
     if (error) throw error;
 

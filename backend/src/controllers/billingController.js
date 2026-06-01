@@ -175,7 +175,7 @@ const createInvoice = async (req, res) => {
       inv.paid_amount = total;
     }
 
-    await auditLog({ user_id: req.user.id, role_id: req.user.role_id, action: 'CREATE_INVOICE', module: 'Billing', entity_type: 'invoice', entity_id: inv.id });
+    await auditLog({ user_id: req.user.id, role_id: req.user.role_id, organization_id: req.user.organization_id || null, action: 'CREATE_INVOICE', module: 'Billing', entity_type: 'invoice', entity_id: inv.id });
     return res.status(201).json({ message: 'Invoice created', invoice: inv });
   } catch (err) {
     return res.status(500).json({ error: err.message });
@@ -214,7 +214,7 @@ const recordPayment = async (req, res) => {
 
     await supabase.from('invoices').update({ paid_amount: newPaid, balance_amount: Math.max(0, newBalance), status: newStatus, updated_by: req.user.id }).eq('id', invoice_id);
 
-    await auditLog({ user_id: req.user.id, role_id: req.user.role_id, action: 'RECORD_PAYMENT', module: 'Billing', entity_type: 'payment', entity_id: pay.id, new_data: { invoice_id, amount: payAmount } });
+    await auditLog({ user_id: req.user.id, role_id: req.user.role_id, organization_id: req.user.organization_id || null, action: 'RECORD_PAYMENT', module: 'Billing', entity_type: 'payment', entity_id: pay.id, new_data: { invoice_id, amount: payAmount } });
     return res.status(201).json({ message: 'Payment recorded', payment: pay, invoice_status: newStatus });
   } catch (err) {
     return res.status(500).json({ error: err.message });
@@ -242,7 +242,7 @@ const processRefund = async (req, res) => {
     }).eq('id', invoice_id).select('*').single();
 
     if (error) throw error;
-    await auditLog({ user_id: req.user.id, role_id: req.user.role_id, action: 'PROCESS_REFUND', module: 'Billing', entity_type: 'invoice', entity_id: invoice_id, new_data: { refund_amount, refund_reason } });
+    await auditLog({ user_id: req.user.id, role_id: req.user.role_id, organization_id: req.user.organization_id || null, action: 'PROCESS_REFUND', module: 'Billing', entity_type: 'invoice', entity_id: invoice_id, new_data: { refund_amount, refund_reason } });
     return res.json({ message: 'Refund processed', invoice: data });
   } catch (err) {
     return res.status(500).json({ error: err.message });

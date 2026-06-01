@@ -17,6 +17,7 @@ const createRequest = async (req, res) => {
       appointment_time,
       consultation_fee: parseFloat(consultation_fee),
       status:          'pending',
+      organization_id: req.user?.organization_id ?? null,
       created_at:      new Date().toISOString(),
     }]).select('id, status, created_at').single();
 
@@ -29,10 +30,13 @@ const createRequest = async (req, res) => {
 const getPendingRequests = async (req, res) => {
   try {
     const supabase = req.db;
-    const { data, error } = await supabase.from('appointment_payment_requests')
+    const organizationId = req.user?.organization_id ?? null;
+    let q = supabase.from('appointment_payment_requests')
       .select('*')
       .eq('status', 'pending')
       .order('created_at', { ascending: false });
+    if (organizationId) q = q.eq('organization_id', organizationId);
+    const { data, error } = await q;
     if (error) throw error;
     return res.json({ requests: data || [] });
   } catch (err) { return res.status(500).json({ error: err.message }); }
@@ -42,13 +46,17 @@ const getPendingRequests = async (req, res) => {
 const approveRequest = async (req, res) => {
   try {
     const supabase = req.db;
+    const organizationId = req.user?.organization_id ?? null;
     const { id } = req.params;
     const { payment_mode = 'cash' } = req.body || {};
 
-    const { data, error } = await supabase.from('appointment_payment_requests')
+    let updQ = supabase.from('appointment_payment_requests')
       .update({ status: 'approved', approved_by: req.user.id, approved_at: new Date().toISOString() })
-      .eq('id', id).select('*').single();
+      .eq('id', id);
+    if (organizationId) updQ = updQ.eq('organization_id', organizationId);
+    const { data, error } = await updQ.select('*').single();
     if (error) throw error;
+    if (!data) return res.status(404).json({ error: 'Payment request not found' });
 
     // Auto-create billing invoice so it appears in patient payment history
     try {
@@ -79,6 +87,7 @@ const approveRequest = async (req, res) => {
           balance_amount:   0,
           status:           'paid',
           notes:            `Collected at reception — ${data.appointment_date || ''}`,
+          organization_id:  organizationId,
           created_at:       new Date().toISOString(),
         }]).select('id').single();
 
@@ -90,6 +99,7 @@ const approveRequest = async (req, res) => {
             payment_date: new Date().toISOString(),
             collected_by: req.user.id,
             notes:        'Collected at reception desk',
+            organization_id: organizationId,
             created_at:   new Date().toISOString(),
           }]);
         }
@@ -118,9 +128,12 @@ const approveRequest = async (req, res) => {
 const checkStatus = async (req, res) => {
   try {
     const supabase = req.db;
-    const { data, error } = await supabase.from('appointment_payment_requests')
+    const organizationId = req.user?.organization_id ?? null;
+    let q = supabase.from('appointment_payment_requests')
       .select('id, status, approved_at')
-      .eq('id', req.params.id).single();
+      .eq('id', req.params.id);
+    if (organizationId) q = q.eq('organization_id', organizationId);
+    const { data, error } = await q.single();
     if (error || !data) return res.status(404).json({ error: 'Request not found' });
     return res.json({ status: data.status, approved_at: data.approved_at });
   } catch (err) { return res.status(500).json({ error: err.message }); }

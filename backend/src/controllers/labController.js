@@ -110,6 +110,7 @@ const getMyLabOrders = async (req, res) => {
 const updateLabOrderStatus = async (req, res) => {
   try {
     const supabase = req.db;
+    const organizationId = getUserOrganizationId(req);
     const { id } = req.params;
     const { status, sample_collection_notes } = req.body;
     const allowed = ['ordered', 'sample_collected', 'processing', 'ready', 'delivered', 'cancelled'];
@@ -121,10 +122,13 @@ const updateLabOrderStatus = async (req, res) => {
     if (status === 'delivered') updates.delivered_at = new Date().toISOString();
     if (sample_collection_notes) updates.sample_collection_notes = sample_collection_notes;
 
-    const { data, error } = await supabase.from('lab_orders').update(updates).eq('id', id).select('*').single();
+    let updQ = supabase.from('lab_orders').update(updates).eq('id', id);
+    if (organizationId) updQ = updQ.eq('organization_id', organizationId);
+    const { data, error } = await updQ.select('*').single();
     if (error) throw error;
+    if (!data) return res.status(404).json({ error: 'Lab order not found' });
 
-    await auditLog({ user_id: req.user.id, role_id: req.user.role_id, action: `LAB_${status.toUpperCase()}`, module: 'Lab', entity_type: 'lab_order', entity_id: id });
+    await auditLog({ user_id: req.user.id, role_id: req.user.role_id, organization_id: req.user.organization_id || null, action: `LAB_${status.toUpperCase()}`, module: 'Lab', entity_type: 'lab_order', entity_id: id });
     return res.json({ message: 'Lab order updated', lab_order: data });
   } catch (err) {
     return res.status(500).json({ error: err.message });
@@ -161,7 +165,7 @@ const uploadLabReport = async (req, res) => {
     // Mark lab order as ready
     await supabase.from('lab_orders').update({ status: 'ready', ready_at: new Date().toISOString() }).eq('id', lab_order_id);
 
-    await auditLog({ user_id: req.user.id, role_id: req.user.role_id, action: 'UPLOAD_LAB_REPORT', module: 'Lab', entity_type: 'lab_report', entity_id: data.id });
+    await auditLog({ user_id: req.user.id, role_id: req.user.role_id, organization_id: req.user.organization_id || null, action: 'UPLOAD_LAB_REPORT', module: 'Lab', entity_type: 'lab_report', entity_id: data.id });
     return res.status(201).json({ message: 'Lab report uploaded', report: data });
   } catch (err) {
     return res.status(500).json({ error: err.message });
@@ -250,11 +254,15 @@ const getLabReports = async (req, res) => {
 const correctLabReport = async (req, res) => {
   try {
     const supabase = req.db;
+    const organizationId = getUserOrganizationId(req);
     const { id } = req.params;
-    const { data: old } = await supabase.from('lab_reports').select('*').eq('id', id).single();
+    let oldQ = supabase.from('lab_reports').select('*').eq('id', id);
+    if (organizationId) oldQ = oldQ.eq('organization_id', organizationId);
+    const { data: old } = await oldQ.single();
+    if (!old) return res.status(404).json({ error: 'Lab report not found' });
     const { data, error } = await supabase.from('lab_reports').update({ ...req.body, status: 'corrected', corrected_by: req.user.id, corrected_at: new Date().toISOString() }).eq('id', id).select('*').single();
     if (error) throw error;
-    await auditLog({ user_id: req.user.id, role_id: req.user.role_id, action: 'CORRECT_LAB_REPORT', module: 'Lab', entity_type: 'lab_report', entity_id: id, old_data: old, new_data: req.body });
+    await auditLog({ user_id: req.user.id, role_id: req.user.role_id, organization_id: req.user.organization_id || null, action: 'CORRECT_LAB_REPORT', module: 'Lab', entity_type: 'lab_report', entity_id: id, old_data: old, new_data: req.body });
     return res.json({ message: 'Lab report corrected', report: data });
   } catch (err) {
     return res.status(500).json({ error: err.message });
@@ -265,11 +273,15 @@ const correctLabReport = async (req, res) => {
 const markReportDelivered = async (req, res) => {
   try {
     const supabase = req.db;
+    const organizationId = getUserOrganizationId(req);
     const { id } = req.params;
-    const { data, error } = await supabase.from('lab_reports').update({ status: 'delivered', delivered_at: new Date().toISOString(), delivered_by: req.user.id }).eq('id', id).select('*').single();
+    let delQ = supabase.from('lab_reports').update({ status: 'delivered', delivered_at: new Date().toISOString(), delivered_by: req.user.id }).eq('id', id);
+    if (organizationId) delQ = delQ.eq('organization_id', organizationId);
+    const { data, error } = await delQ.select('*').single();
     if (error) throw error;
+    if (!data) return res.status(404).json({ error: 'Lab report not found' });
     await supabase.from('lab_orders').update({ status: 'delivered', delivered_at: new Date().toISOString() }).eq('id', data.lab_order_id);
-    await auditLog({ user_id: req.user.id, role_id: req.user.role_id, action: 'DELIVER_LAB_REPORT', module: 'Lab', entity_type: 'lab_report', entity_id: id });
+    await auditLog({ user_id: req.user.id, role_id: req.user.role_id, organization_id: req.user.organization_id || null, action: 'DELIVER_LAB_REPORT', module: 'Lab', entity_type: 'lab_report', entity_id: id });
     return res.json({ message: 'Report marked delivered', report: data });
   } catch (err) {
     return res.status(500).json({ error: err.message });
@@ -298,12 +310,16 @@ const getTestCatalog = async (req, res) => {
 const updateLabOrderPayment = async (req, res) => {
   try {
     const supabase = req.db;
+    const organizationId = getUserOrganizationId(req);
     const { id } = req.params;
     const { payment_status, payment_source, payment_amount } = req.body;
-    const { data, error } = await supabase.from('lab_orders')
+    let payQ = supabase.from('lab_orders')
       .update({ payment_status, payment_source: payment_source || 'lab', payment_amount: payment_amount || null, payment_collected_at: new Date().toISOString() })
-      .eq('id', id).select('id, payment_status, payment_source').single();
+      .eq('id', id);
+    if (organizationId) payQ = payQ.eq('organization_id', organizationId);
+    const { data, error } = await payQ.select('id, payment_status, payment_source').single();
     if (error) throw error;
+    if (!data) return res.status(404).json({ error: 'Lab order not found' });
     return res.json({ message: 'Payment status updated', order: data });
   } catch (err) { return res.status(500).json({ error: err.message }); }
 };
