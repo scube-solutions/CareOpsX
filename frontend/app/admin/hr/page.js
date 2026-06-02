@@ -1,6 +1,7 @@
 'use client';
 import { useEffect, useState } from 'react';
 import { api } from '@/lib/api';
+import { useFieldErrors } from '@/lib/forms';
 
 const TABS = ['Staff', 'Attendance', 'Leave', 'Payroll', 'Shifts'];
 
@@ -45,15 +46,18 @@ function StaffTab({ users }) {
   const [editing,  setEditing]  = useState(null);
   const [msg,      setMsg]      = useState('');
   const [search,   setSearch]   = useState('');
+  const fe = useFieldErrors();
 
   const load = async () => { try { setStaff((await api('/hr/staff')).staff || []); } catch(e) { setMsg(e.message); } };
   useEffect(() => { load(); }, []);
 
   const save = async () => {
+    const errs = fe.validate({ user_id: [[!form.user_id, 'Select an employee']] });
+    if (errs) return;
     try {
       if (editing) await api(`/hr/staff/${editing.id}`, { method: 'PUT',  body: JSON.stringify(form) });
       else         await api('/hr/staff',                { method: 'POST', body: JSON.stringify(form) });
-      setMsg('Saved'); setShowForm(false); setForm({}); setEditing(null); load();
+      setMsg('Saved'); setShowForm(false); setForm({}); setEditing(null); fe.reset(); load();
     } catch(e) { setMsg(e.message); }
   };
 
@@ -81,11 +85,12 @@ function StaffTab({ users }) {
         <div style={{ ...s.card, marginBottom: 20, borderLeft: '4px solid #00b4a0' }}>
           <h2 style={s.h2}>{editing ? 'Edit Staff' : 'New Staff Profile'}</h2>
           <div style={s.grid3}>
-            <div style={s.fg}><label style={s.label}>Employee (User)</label>
-              <select value={form.user_id || ''} onChange={e => setForm({ ...form, user_id: e.target.value })} style={s.input}>
+            <div style={s.fg}><label style={s.label}>Employee (User) *</label>
+              <select value={form.user_id || ''} onChange={e => { setForm({ ...form, user_id: e.target.value }); fe.clear('user_id'); }} style={fe.inputStyle(s.input, 'user_id')}>
                 <option value="">Select user</option>
                 {users.map(u => <option key={u.id} value={u.id}>{u.first_name} {u.last_name} — {ROLE_LABELS[u.role_id] || 'Staff'}</option>)}
               </select>
+              {fe.msg('user_id')}
             </div>
             <div style={s.fg}><label style={s.label}>Employee ID</label><input value={form.employee_id || ''} onChange={e => setForm({ ...form, employee_id: e.target.value })} style={s.input} placeholder="EMP-001" /></div>
             <div style={s.fg}><label style={s.label}>Department</label>
@@ -153,14 +158,17 @@ function AttendanceTab({ users }) {
   const [showForm, setShowForm] = useState(false);
   const [form,     setForm]     = useState({ user_id: '', status: 'present', check_in: '', check_out: '', notes: '' });
   const [msg,      setMsg]      = useState('');
+  const fe = useFieldErrors();
 
   const load = async () => { try { setRecords((await api(`/hr/attendance?date=${date}`)).attendance || []); } catch(e) { setMsg(e.message); } };
   useEffect(() => { load(); }, [date]);
 
   const mark = async () => {
+    const errs = fe.validate({ user_id: [[!form.user_id, 'Select an employee']] });
+    if (errs) return;
     try {
       await api('/hr/attendance', { method: 'POST', body: JSON.stringify({ ...form, date }) });
-      setMsg('Marked'); setShowForm(false); setForm({ user_id: '', status: 'present', check_in: '', check_out: '', notes: '' }); load();
+      setMsg('Marked'); setShowForm(false); setForm({ user_id: '', status: 'present', check_in: '', check_out: '', notes: '' }); fe.reset(); load();
     } catch(e) { setMsg(e.message); }
   };
 
@@ -186,11 +194,12 @@ function AttendanceTab({ users }) {
         <div style={{ ...s.card, marginBottom: 20, borderLeft: '4px solid #00b4a0' }}>
           <h2 style={s.h2}>Mark Attendance — {date}</h2>
           <div style={s.grid3}>
-            <div style={s.fg}><label style={s.label}>Employee</label>
-              <select value={form.user_id} onChange={e => setForm({ ...form, user_id: e.target.value })} style={s.input}>
+            <div style={s.fg}><label style={s.label}>Employee *</label>
+              <select value={form.user_id} onChange={e => { setForm({ ...form, user_id: e.target.value }); fe.clear('user_id'); }} style={fe.inputStyle(s.input, 'user_id')}>
                 <option value="">Select</option>
                 {users.map(u => <option key={u.id} value={u.id}>{u.first_name} {u.last_name}</option>)}
               </select>
+              {fe.msg('user_id')}
             </div>
             <div style={s.fg}><label style={s.label}>Status</label>
               <select value={form.status} onChange={e => setForm({ ...form, status: e.target.value })} style={s.input}>
@@ -240,12 +249,19 @@ function LeaveTab({ users }) {
   const [showForm, setShowForm] = useState(false);
   const [form,     setForm]     = useState({ user_id: '', leave_type: 'Sick Leave', from_date: '', to_date: '', reason: '' });
   const [msg,      setMsg]      = useState('');
+  const fe = useFieldErrors();
 
   const load = async () => { try { setLeaves((await api('/hr/leaves')).leaves || []); } catch(e) { setMsg(e.message); } };
   useEffect(() => { load(); }, []);
 
   const submit = async () => {
-    try { await api('/hr/leaves', { method: 'POST', body: JSON.stringify(form) }); setMsg('Submitted'); setShowForm(false); load(); } catch(e) { setMsg(e.message); }
+    const errs = fe.validate({
+      user_id:   [[!form.user_id, 'Select an employee']],
+      from_date: [[!form.from_date, 'From date is required']],
+      to_date:   [[!form.to_date, 'To date is required'], [form.from_date && form.to_date && form.to_date < form.from_date, 'To date must be after From']],
+    });
+    if (errs) return;
+    try { await api('/hr/leaves', { method: 'POST', body: JSON.stringify(form) }); setMsg('Submitted'); setShowForm(false); fe.reset(); load(); } catch(e) { setMsg(e.message); }
   };
   const updateStatus = async (id, status) => {
     try { await api(`/hr/leaves/${id}/status`, { method: 'PATCH', body: JSON.stringify({ status }) }); load(); } catch(e) { setMsg(e.message); }
@@ -271,19 +287,20 @@ function LeaveTab({ users }) {
         <div style={{ ...s.card, marginBottom: 20, borderLeft: '4px solid #00b4a0' }}>
           <h2 style={s.h2}>New Leave Request</h2>
           <div style={s.grid3}>
-            <div style={s.fg}><label style={s.label}>Employee</label>
-              <select value={form.user_id} onChange={e => setForm({ ...form, user_id: e.target.value })} style={s.input}>
+            <div style={s.fg}><label style={s.label}>Employee *</label>
+              <select value={form.user_id} onChange={e => { setForm({ ...form, user_id: e.target.value }); fe.clear('user_id'); }} style={fe.inputStyle(s.input, 'user_id')}>
                 <option value="">Select</option>
                 {users.map(u => <option key={u.id} value={u.id}>{u.first_name} {u.last_name}</option>)}
               </select>
+              {fe.msg('user_id')}
             </div>
             <div style={s.fg}><label style={s.label}>Leave Type</label>
               <select value={form.leave_type} onChange={e => setForm({ ...form, leave_type: e.target.value })} style={s.input}>
                 {LEAVE_TYPES.map(t => <option key={t}>{t}</option>)}
               </select>
             </div>
-            <div style={s.fg}><label style={s.label}>From</label><input type="date" value={form.from_date} onChange={e => setForm({ ...form, from_date: e.target.value })} style={s.input} /></div>
-            <div style={s.fg}><label style={s.label}>To</label><input type="date" value={form.to_date} onChange={e => setForm({ ...form, to_date: e.target.value })} style={s.input} /></div>
+            <div style={s.fg}><label style={s.label}>From *</label><input type="date" value={form.from_date} onChange={e => { setForm({ ...form, from_date: e.target.value }); fe.clear('from_date'); }} style={fe.inputStyle(s.input, 'from_date')} />{fe.msg('from_date')}</div>
+            <div style={s.fg}><label style={s.label}>To *</label><input type="date" value={form.to_date} onChange={e => { setForm({ ...form, to_date: e.target.value }); fe.clear('to_date'); }} style={fe.inputStyle(s.input, 'to_date')} />{fe.msg('to_date')}</div>
             <div style={{ ...s.fg, gridColumn: 'span 2' }}><label style={s.label}>Reason</label><input value={form.reason} onChange={e => setForm({ ...form, reason: e.target.value })} style={s.input} /></div>
           </div>
           <div style={{ display: 'flex', gap: 10, marginTop: 16 }}>
@@ -443,15 +460,22 @@ function ShiftsTab() {
   const [form,     setForm]     = useState({ shift_name: '', start_time: '', end_time: '', break_minutes: 30, days_of_week: [], color: '#00b4a0' });
   const [editing,  setEditing]  = useState(null);
   const [msg,      setMsg]      = useState('');
+  const fe = useFieldErrors();
 
   const load = async () => { try { setShifts((await api('/hr/shifts')).shifts || []); } catch(e) { setMsg(e.message); } };
   useEffect(() => { load(); }, []);
 
   const save = async () => {
+    const errs = fe.validate({
+      shift_name: [[!form.shift_name?.trim(), 'Shift name is required']],
+      start_time: [[!form.start_time, 'Start time is required']],
+      end_time:   [[!form.end_time, 'End time is required']],
+    });
+    if (errs) return;
     try {
       if (editing) await api(`/hr/shifts/${editing.id}`, { method: 'PUT',  body: JSON.stringify(form) });
       else         await api('/hr/shifts',                { method: 'POST', body: JSON.stringify(form) });
-      setMsg('Saved'); setShowForm(false); setForm({ shift_name: '', start_time: '', end_time: '', break_minutes: 30, days_of_week: [], color: '#00b4a0' }); setEditing(null); load();
+      setMsg('Saved'); setShowForm(false); setForm({ shift_name: '', start_time: '', end_time: '', break_minutes: 30, days_of_week: [], color: '#00b4a0' }); setEditing(null); fe.reset(); load();
     } catch(e) { setMsg(e.message); }
   };
 
@@ -472,9 +496,9 @@ function ShiftsTab() {
         <div style={{ ...s.card, marginBottom: 20, borderLeft: '4px solid #00b4a0' }}>
           <h2 style={s.h2}>{editing ? 'Edit Shift' : 'New Shift'}</h2>
           <div style={s.grid3}>
-            <div style={s.fg}><label style={s.label}>Shift Name</label><input value={form.shift_name} onChange={e => setForm({ ...form, shift_name: e.target.value })} style={s.input} placeholder="Morning Shift" /></div>
-            <div style={s.fg}><label style={s.label}>Start Time</label><input type="time" value={form.start_time} onChange={e => setForm({ ...form, start_time: e.target.value })} style={s.input} /></div>
-            <div style={s.fg}><label style={s.label}>End Time</label><input type="time" value={form.end_time} onChange={e => setForm({ ...form, end_time: e.target.value })} style={s.input} /></div>
+            <div style={s.fg}><label style={s.label}>Shift Name *</label><input value={form.shift_name} onChange={e => { setForm({ ...form, shift_name: e.target.value }); fe.clear('shift_name'); }} style={fe.inputStyle(s.input, 'shift_name')} placeholder="Morning Shift" />{fe.msg('shift_name')}</div>
+            <div style={s.fg}><label style={s.label}>Start Time *</label><input type="time" value={form.start_time} onChange={e => { setForm({ ...form, start_time: e.target.value }); fe.clear('start_time'); }} style={fe.inputStyle(s.input, 'start_time')} />{fe.msg('start_time')}</div>
+            <div style={s.fg}><label style={s.label}>End Time *</label><input type="time" value={form.end_time} onChange={e => { setForm({ ...form, end_time: e.target.value }); fe.clear('end_time'); }} style={fe.inputStyle(s.input, 'end_time')} />{fe.msg('end_time')}</div>
             <div style={s.fg}><label style={s.label}>Break (min)</label><input type="number" value={form.break_minutes} onChange={e => setForm({ ...form, break_minutes: +e.target.value })} style={s.input} /></div>
             <div style={{ ...s.fg, gridColumn: 'span 2' }}>
               <label style={s.label}>Working Days</label>

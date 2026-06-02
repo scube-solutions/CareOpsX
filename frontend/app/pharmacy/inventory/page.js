@@ -10,6 +10,7 @@ export default function PharmacyInventoryPage() {
   const [showAdd, setShowAdd]       = useState(false);
   const [showStock, setShowStock]   = useState(null);
   const [form, setForm]             = useState(EMPTY_FORM);
+  const [fieldErr, setFieldErr]     = useState({});
   const [stockQty, setStockQty]     = useState('');
   const [msg, setMsg]               = useState('');
   const [loading, setLoading]       = useState(false);
@@ -97,7 +98,12 @@ export default function PharmacyInventoryPage() {
   useEffect(() => { load(); }, [search]);
 
   const addMedicine = async () => {
-    if (!form.medicine_name || !form.unit_price) { setMsg('Name and price required'); return; }
+    const errs = {};
+    if (!form.medicine_name?.trim()) errs.medicine_name = 'Medicine name is required';
+    if (form.unit_price === '' || form.unit_price == null) errs.unit_price = 'Price is required';
+    else if (isNaN(Number(form.unit_price))) errs.unit_price = 'Price must be a number';
+    if (Object.keys(errs).length) { setFieldErr(errs); return; }
+    setFieldErr({});
     setLoading(true);
     try {
       await api('/pharmacy/inventory', { method: 'POST', body: JSON.stringify({ ...form, current_stock: parseInt(form.initial_stock) || 0, unit_price: parseFloat(form.unit_price), reorder_level: parseInt(form.reorder_level) }) });
@@ -578,14 +584,14 @@ function BarcodeScanner({ onDetect, onError }) {
 function MedicineForm({ form, setForm, s, autoFocusName = false }) {
   return (
     <div style={s.grid3}>
-      <div style={s.fg}><label style={s.label}>Medicine Name *</label><input autoFocus={autoFocusName} value={form.medicine_name} onChange={e => setForm(f => ({ ...f, medicine_name: e.target.value }))} style={s.input} placeholder="e.g. Paracetamol 500mg" /></div>
+      <div style={s.fg}><label style={s.label}>Medicine Name *</label><input autoFocus={autoFocusName} value={form.medicine_name} onChange={e => { setForm(f => ({ ...f, medicine_name: e.target.value })); if (fieldErr.medicine_name) setFieldErr(p => ({ ...p, medicine_name: '' })); }} style={{ ...s.input, ...(fieldErr.medicine_name ? { borderColor: '#ef4444', background: '#fef2f2' } : {}) }} placeholder="e.g. Paracetamol 500mg" />{fieldErr.medicine_name && <span style={{ color: '#ef4444', fontSize: 12, fontWeight: 600, marginTop: 4, display: 'block' }}>{fieldErr.medicine_name}</span>}</div>
       <div style={s.fg}><label style={s.label}>Category</label><input value={form.category} onChange={e => setForm(f => ({ ...f, category: e.target.value }))} style={s.input} placeholder="e.g. Analgesic" /></div>
       <div style={s.fg}><label style={s.label}>Unit</label>
         <select value={form.unit} onChange={e => setForm(f => ({ ...f, unit: e.target.value }))} style={s.input}>
           {['tablet', 'capsule', 'syrup', 'injection', 'cream', 'drops', 'sachet', 'strip'].map(u => <option key={u} value={u}>{u}</option>)}
         </select>
       </div>
-      <div style={s.fg}><label style={s.label}>Unit Price (₹) *</label><input type="number" value={form.unit_price} onChange={e => setForm(f => ({ ...f, unit_price: e.target.value }))} style={s.input} placeholder="0.00" /></div>
+      <div style={s.fg}><label style={s.label}>Unit Price (₹) *</label><input type="number" value={form.unit_price} onChange={e => { setForm(f => ({ ...f, unit_price: e.target.value })); if (fieldErr.unit_price) setFieldErr(p => ({ ...p, unit_price: '' })); }} style={{ ...s.input, ...(fieldErr.unit_price ? { borderColor: '#ef4444', background: '#fef2f2' } : {}) }} placeholder="0.00" />{fieldErr.unit_price && <span style={{ color: '#ef4444', fontSize: 12, fontWeight: 600, marginTop: 4, display: 'block' }}>{fieldErr.unit_price}</span>}</div>
       <div style={s.fg}><label style={s.label}>Initial Stock (qty)</label><input type="number" value={form.initial_stock} onChange={e => setForm(f => ({ ...f, initial_stock: e.target.value }))} style={s.input} placeholder="0" /></div>
       <div style={s.fg}><label style={s.label}>Reorder Level</label><input type="number" value={form.reorder_level} onChange={e => setForm(f => ({ ...f, reorder_level: e.target.value }))} style={s.input} /></div>
       <div style={s.fg}><label style={s.label}>Barcode / QR</label><input value={form.barcode} onChange={e => setForm(f => ({ ...f, barcode: e.target.value }))} style={s.input} placeholder="Optional — scan or type" /></div>

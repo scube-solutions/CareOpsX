@@ -2,17 +2,18 @@
 import { useState } from 'react';
 import { api } from '@/lib/api';
 
-const Field = ({ label, name, type = 'text', required, options, value, onChange }) => (
+const Field = ({ label, name, type = 'text', required, options, value, onChange, error }) => (
   <div style={s.fg}>
     <label style={s.label}>{label}{required && <span style={{ color: '#ef4444' }}> *</span>}</label>
     {options ? (
-      <select name={name} value={value} onChange={onChange} style={s.input}>
+      <select name={name} value={value} onChange={onChange} style={{ ...s.input, ...(error ? { borderColor: '#ef4444', background: '#fef2f2' } : {}) }}>
         <option value="">Select {label}</option>
         {options.map(o => <option key={o} value={o}>{o}</option>)}
       </select>
     ) : (
-      <input type={type} name={name} value={value} onChange={onChange} style={s.input} />
+      <input type={type} name={name} value={value} onChange={onChange} style={{ ...s.input, ...(error ? { borderColor: '#ef4444', background: '#fef2f2' } : {}) }} />
     )}
+    {error && <span style={{ color: '#ef4444', fontSize: 12, fontWeight: 600, marginTop: 4, display: 'block' }}>{error}</span>}
   </div>
 );
 
@@ -21,10 +22,11 @@ export default function NewPatientPage() {
   const [duplicates, setDuplicates] = useState([]);
   const [dupChecked, setDupChecked] = useState(false);
   const [error, setError] = useState('');
+  const [fieldErr, setFieldErr] = useState({});
   const [success, setSuccess] = useState('');
   const [loading, setLoading] = useState(false);
 
-  const handle = e => setForm({ ...form, [e.target.name]: e.target.value });
+  const handle = e => { setForm({ ...form, [e.target.name]: e.target.value }); if (fieldErr[e.target.name]) setFieldErr(p => ({ ...p, [e.target.name]: '' })); };
 
   const checkDuplicates = async () => {
     if (!form.phone && !form.email) { setError('Enter phone or email to check duplicates'); return; }
@@ -38,9 +40,15 @@ export default function NewPatientPage() {
   };
 
   const submit = async () => {
+    const errs = {};
+    if (!form.first_name?.trim()) errs.first_name = 'First name is required';
+    if (!form.gender)             errs.gender     = 'Gender is required';
+    if (!form.phone?.trim())      errs.phone      = 'Phone is required';
+    else if (!/^\+?\d{10,15}$/.test(form.phone.replace(/[\s-]/g, ''))) errs.phone = 'Enter a valid phone';
+    if (form.email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(form.email)) errs.email = 'Enter a valid email';
+    if (Object.keys(errs).length) { setFieldErr(errs); return; }
     if (!dupChecked) { setError('Please check for duplicates first'); return; }
-    if (!form.first_name || !form.phone) { setError('First name and phone are required'); return; }
-    setLoading(true); setError('');
+    setLoading(true); setError(''); setFieldErr({});
     try {
       const data = await api('/patients', { method: 'POST', body: JSON.stringify(form) });
       setSuccess(`Patient created! ID: ${data.patient.patient_uid}`);
@@ -92,13 +100,13 @@ export default function NewPatientPage() {
       <div style={s.card}>
         <h2 style={s.h2}>Personal Information</h2>
         <div style={s.grid3}>
-          <Field label="First Name" name="first_name" required value={form.first_name} onChange={handle} />
+          <Field label="First Name" name="first_name" required value={form.first_name} onChange={handle} error={fieldErr.first_name} />
           <Field label="Last Name" name="last_name" value={form.last_name} onChange={handle} />
-          <Field label="Gender" name="gender" options={['Male', 'Female', 'Other']} required value={form.gender} onChange={handle} />
+          <Field label="Gender" name="gender" options={['Male', 'Female', 'Other']} required value={form.gender} onChange={handle} error={fieldErr.gender} />
           <Field label="Date of Birth" name="date_of_birth" type="date" value={form.date_of_birth} onChange={handle} />
-          <Field label="Phone" name="phone" type="tel" required value={form.phone} onChange={handle} />
+          <Field label="Phone" name="phone" type="tel" required value={form.phone} onChange={handle} error={fieldErr.phone} />
           <Field label="Alternate Phone" name="alternate_phone" type="tel" value={form.alternate_phone} onChange={handle} />
-          <Field label="Email" name="email" type="email" value={form.email} onChange={handle} />
+          <Field label="Email" name="email" type="email" value={form.email} onChange={handle} error={fieldErr.email} />
           <Field label="Blood Group" name="blood_group" options={['A+', 'A-', 'B+', 'B-', 'AB+', 'AB-', 'O+', 'O-']} value={form.blood_group} onChange={handle} />
           <Field label="Chronic Disease Tag" name="chronic_disease_tag" value={form.chronic_disease_tag} onChange={handle} />
         </div>
