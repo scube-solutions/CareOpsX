@@ -132,7 +132,15 @@ const getLobbyDisplay = async (req, res) => {
     const called = rows.filter(t => t.status === 'called' || t.status === 'in_consultation');
     const waiting = rows.filter(t => t.status === 'waiting');
 
-    return res.json({ called, waiting, total_waiting: waiting.length });
+    // Voice/announcement settings so the lobby display can speak announcements.
+    const settingsOrg = organizationId || (req.query.org_id ? Number(req.query.org_id) : null);
+    let settings = { ...DEFAULT_QUEUE_SETTINGS };
+    if (settingsOrg) {
+      const { data: s } = await supabase.from('queue_settings').select('*').eq('organization_id', settingsOrg).maybeSingle();
+      if (s) settings = { ...settings, ...s };
+    }
+
+    return res.json({ called, waiting, total_waiting: waiting.length, settings });
   } catch (err) {
     return res.status(500).json({ error: err.message });
   }
@@ -164,7 +172,10 @@ const callNext = async (req, res) => {
     if (!nextTokens?.length) return res.json({ message: 'No more patients waiting', next_token: null });
 
     const next = nextTokens[0];
-    const { data: updatedRaw, error } = await supabase.from('queue_tokens').update({ status: 'called', called_at: new Date().toISOString() }).eq('id', next.id).select('*').single();
+    const now = new Date().toISOString();
+    const { data: updatedRaw, error } = await supabase.from('queue_tokens')
+      .update({ status: 'called', called_at: now, last_called_at: now, call_count: (next.call_count || 0) + 1 })
+      .eq('id', next.id).select('*').single();
     if (error) throw error;
     const [data] = await attachQueueRelated([updatedRaw], supabase);
 
@@ -177,6 +188,80 @@ const callNext = async (req, res) => {
   } catch (err) {
     return res.status(500).json({ error: err.message });
   }
+};
+
+// ── Doctor: Call a SPECIFIC patient (by token id) ─────────────────────────────
+const callPatient = async (req, res) => {
+  try {
+    const supabase = req.db;
+    const { id } = req.params;
+    const organizationId = getUserOrganizationId(req);
+    const { data: token } = await supabase.from('queue_tokens').select('*').eq('id', id).single();
+    if (!token) return res.status(404).json({ error: 'Token not found' });
+    const now = new Date().toISOString();
+    const { data: updatedRaw, error } = await supabase.from('queue_tokens')
+      .update({ status: 'called', called_at: now, last_called_at: now, call_count: (token.call_count || 0) + 1 })
+      .eq('id', id).select('*').single();
+    if (error) throw error;
+    const [data] = await attachQueueRelated([updatedRaw], supabase);
+    if (token.appointment_id) {
+      await supabase.from('appointments').update({ queue_status: 'called', called_at: now }).eq('id', token.appointment_id);
+    }
+    await auditLog({ user_id: req.user.id, role_id: req.user.role_id, organization_id: organizationId || null, action: 'CALL_PATIENT', module: 'Queue', entity_type: 'queue_token', entity_id: id });
+    return res.json({ message: 'Patient called', token: data });
+  } catch (err) { return res.status(500).json({ error: err.message }); }
+};
+
+// ── Doctor: Recall (re-announce) — queue position unchanged ───────────────────
+const recallPatient = async (req, res) => {
+  try {
+    const supabase = req.db;
+    const { id } = req.params;
+    const organizationId = getUserOrganizationId(req);
+    const { data: token } = await supabase.from('queue_tokens').select('*').eq('id', id).single();
+    if (!token) return res.status(404).json({ error: 'Token not found' });
+    const now = new Date().toISOString();
+    // Only bump the announcement counter; status stays the same.
+    const { data: updatedRaw, error } = await supabase.from('queue_tokens')
+      .update({ last_called_at: now, call_count: (token.call_count || 0) + 1 })
+      .eq('id', id).select('*').single();
+    if (error) throw error;
+    const [data] = await attachQueueRelated([updatedRaw], supabase);
+    await auditLog({ user_id: req.user.id, role_id: req.user.role_id, organization_id: organizationId || null, action: 'RECALL_PATIENT', module: 'Queue', entity_type: 'queue_token', entity_id: id });
+    return res.json({ message: 'Patient recalled', token: data });
+  } catch (err) { return res.status(500).json({ error: err.message }); }
+};
+
+// ── Queue / Voice Settings ────────────────────────────────────────────────────
+const DEFAULT_QUEUE_SETTINGS = {
+  voice_enabled: true, voice_name: null, voice_lang: 'en-IN', voice_gender: 'female',
+  volume: 1.0, rate: 1.0, pitch: 1.0, repeat_count: 3, repeat_interval_sec: 10,
+  announce_template: 'Attention please. Token number {token}, {name}, please proceed to {doctor}, consultation room {room}.',
+};
+
+const getQueueSettings = async (req, res) => {
+  try {
+    const supabase = req.db;
+    const organizationId = getUserOrganizationId(req) || (req.query.org_id ? Number(req.query.org_id) : null);
+    if (!organizationId) return res.json({ settings: DEFAULT_QUEUE_SETTINGS });
+    const { data } = await supabase.from('queue_settings').select('*').eq('organization_id', organizationId).maybeSingle();
+    return res.json({ settings: { ...DEFAULT_QUEUE_SETTINGS, ...(data || {}) } });
+  } catch (err) { return res.status(500).json({ error: err.message }); }
+};
+
+const updateQueueSettings = async (req, res) => {
+  try {
+    const supabase = req.db;
+    const organizationId = getUserOrganizationId(req);
+    if (!organizationId) return res.status(400).json({ error: 'Organization context required' });
+    const allowed = ['voice_enabled', 'voice_name', 'voice_lang', 'voice_gender', 'volume', 'rate', 'pitch', 'repeat_count', 'repeat_interval_sec', 'announce_template'];
+    const payload = { organization_id: organizationId, updated_by: req.user.id, updated_at: new Date().toISOString() };
+    allowed.forEach(k => { if (req.body[k] !== undefined) payload[k] = req.body[k]; });
+    const { data, error } = await supabase.from('queue_settings').upsert([payload], { onConflict: 'organization_id' }).select('*').single();
+    if (error) throw error;
+    await auditLog({ user_id: req.user.id, role_id: req.user.role_id, organization_id: organizationId, action: 'UPDATE_QUEUE_SETTINGS', module: 'Queue', entity_type: 'queue_settings', entity_id: String(organizationId) });
+    return res.json({ message: 'Queue settings saved', settings: data });
+  } catch (err) { return res.status(500).json({ error: err.message }); }
 };
 
 // ── Update Token Status ───────────────────────────────────────────────────────
@@ -245,4 +330,4 @@ const getPatientJourney = async (req, res) => {
   }
 };
 
-module.exports = { generateQueueToken, getLiveQueue, getLobbyDisplay, callNext, updateTokenStatus, logPatientJourney, getPatientJourney };
+module.exports = { generateQueueToken, getLiveQueue, getLobbyDisplay, callNext, callPatient, recallPatient, getQueueSettings, updateQueueSettings, updateTokenStatus, logPatientJourney, getPatientJourney };

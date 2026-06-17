@@ -6,14 +6,17 @@ import { getDashboardRoute } from '@/lib/auth';
 export default function VerifyEmailPage() {
   const [email, setEmail]   = useState('');
   const [otp, setOtp]       = useState('');
+  const [purpose, setPurpose] = useState('verification');
   const [error, setError]   = useState('');
   const [notice, setNotice] = useState('');
   const [loading, setLoading] = useState(false);
   const [resending, setResending] = useState(false);
 
   useEffect(() => {
-    const e = new URLSearchParams(window.location.search).get('email') || '';
-    setEmail(e);
+    const q = new URLSearchParams(window.location.search);
+    const e = q.get('email') || '';
+    const p = q.get('purpose') === 'login' ? 'login' : 'verification';
+    setEmail(e); setPurpose(p);
     if (e) setNotice(`Enter the 6-digit code sent to ${e}.`);
   }, []);
 
@@ -22,7 +25,7 @@ export default function VerifyEmailPage() {
     if (!otp || otp.length < 4) { setError('Enter the verification code'); return; }
     setLoading(true);
     try {
-      const data = await api('/auth/verify-otp', { method: 'POST', body: JSON.stringify({ email, otp, purpose: 'verification' }) });
+      const data = await api('/auth/verify-otp', { method: 'POST', body: JSON.stringify({ email, otp, purpose }) });
       localStorage.setItem('token', data.token);
       localStorage.setItem('user', JSON.stringify(data.user));
       window.location.href = getDashboardRoute(data.user.role_id);
@@ -36,7 +39,7 @@ export default function VerifyEmailPage() {
   const resend = async () => {
     setError(''); setResending(true);
     try {
-      const data = await api('/auth/send-otp', { method: 'POST', body: JSON.stringify({ email, purpose: 'verification' }) });
+      const data = await api('/auth/send-otp', { method: 'POST', body: JSON.stringify({ email, purpose }) });
       if (data.dev_otp) { setOtp(data.dev_otp); setNotice(`Email delivery unavailable. Your code: ${data.dev_otp}`); }
       else setNotice('A new code has been sent to your email.');
     } catch (err) {
@@ -61,8 +64,8 @@ export default function VerifyEmailPage() {
       </a>
 
       <div style={s.card}>
-        <h1 style={s.title}>Verify Your Email</h1>
-        <p style={s.sub}>Confirm your email address to activate your account.</p>
+        <h1 style={s.title}>{purpose === 'login' ? 'Two-Factor Verification' : 'Verify Your Email'}</h1>
+        <p style={s.sub}>{purpose === 'login' ? 'Enter the security code to complete sign in.' : 'Confirm your email address to activate your account.'}</p>
 
         {notice && <div style={{ ...s.error, background: '#f0fdfb', border: '1px solid #99f6e4', color: '#0f766e' }}>{notice}</div>}
         {error && <div style={s.error}>{error}</div>}

@@ -158,6 +158,27 @@ export default function DoctorDashboard() {
     await loadQueue();
   };
 
+  // Call a specific patient → status Called + triggers lobby display + voice.
+  const callPatient = async (tokenId, tokenNo) => {
+    try { await api(`/queue/token/${tokenId}/call`, { method: 'POST' }); setMsg(`Called Token #${tokenNo}`); await loadQueue(); }
+    catch (e) { setMsg(e.message); }
+  };
+  // Recall → re-announce only, queue position unchanged.
+  const recallPatient = async (tokenId, tokenNo) => {
+    try { await api(`/queue/token/${tokenId}/recall`, { method: 'POST' }); setMsg(`Recalled Token #${tokenNo}`); await loadQueue(); }
+    catch (e) { setMsg(e.message); }
+  };
+  // Start consultation (Called → In Consultation).
+  const startConsult = async (tokenId) => {
+    try { await api(`/queue/token/${tokenId}/status`, { method: 'PATCH', body: JSON.stringify({ status: 'in_consultation' }) }); await loadQueue(); }
+    catch (e) { setMsg(e.message); }
+  };
+  // Complete consultation (→ Completed); next waiting patient becomes head of queue.
+  const completeConsult = async (tokenId) => {
+    try { await api(`/queue/token/${tokenId}/status`, { method: 'PATCH', body: JSON.stringify({ status: 'completed' }) }); setMsg('Consultation completed'); await loadQueue(); }
+    catch (e) { setMsg(e.message); }
+  };
+
   const saveConsultation = async () => {
     if (!selectedToken || !consult.chief_complaint) { setMsg('Chief complaint is required'); return; }
     setLoading(true);
@@ -291,10 +312,23 @@ export default function DoctorDashboard() {
                     </div>
                     <span style={{ background: STATUS_COLORS[t.status] + '20', color: STATUS_COLORS[t.status], padding: '2px 8px', borderRadius: 12, fontSize: '.7rem', fontWeight: 600 }}>{t.status}</span>
                   </div>
-                  {(t.status === 'called' || t.status === 'in_consultation') && (
+                  {t.status === 'waiting' && (
                     <div style={{ display: 'flex', gap: 6, marginTop: 6 }}>
-                      <button onClick={e => { e.stopPropagation(); setSelectedToken(t); setShowConsultForm(true); }} style={s.actBtn}>+ Consultation</button>
+                      <button onClick={e => { e.stopPropagation(); callPatient(t.id, t.token_number); }} style={{ ...s.actBtn, background: '#eff6ff', color: '#1d4ed8', borderColor: '#bfdbfe' }}>📢 Call Patient</button>
                       <button onClick={e => { e.stopPropagation(); markMissed(t.id); }} style={{ ...s.actBtn, background: '#fef2f2', color: '#dc2626', borderColor: '#fecaca' }}>Missed</button>
+                    </div>
+                  )}
+                  {t.status === 'called' && (
+                    <div style={{ display: 'flex', gap: 6, marginTop: 6, flexWrap: 'wrap' }}>
+                      <button onClick={e => { e.stopPropagation(); recallPatient(t.id, t.token_number); }} style={{ ...s.actBtn, background: '#fffbeb', color: '#92400e', borderColor: '#fde68a' }}>🔁 Recall</button>
+                      <button onClick={e => { e.stopPropagation(); startConsult(t.id); }} style={{ ...s.actBtn, background: '#f5f3ff', color: '#7c3aed', borderColor: '#ddd6fe' }}>▶ Start</button>
+                      <button onClick={e => { e.stopPropagation(); markMissed(t.id); }} style={{ ...s.actBtn, background: '#fef2f2', color: '#dc2626', borderColor: '#fecaca' }}>Missed</button>
+                    </div>
+                  )}
+                  {t.status === 'in_consultation' && (
+                    <div style={{ display: 'flex', gap: 6, marginTop: 6, flexWrap: 'wrap' }}>
+                      <button onClick={e => { e.stopPropagation(); setSelectedToken(t); setShowConsultForm(true); }} style={s.actBtn}>+ Consultation</button>
+                      <button onClick={e => { e.stopPropagation(); completeConsult(t.id); }} style={{ ...s.actBtn, background: '#f0fdf4', color: '#166534', borderColor: '#bbf7d0' }}>✓ Complete</button>
                     </div>
                   )}
                 </div>

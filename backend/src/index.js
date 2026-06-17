@@ -67,6 +67,7 @@ app.use('/dropoff',       require('./routes/dropoff'));
 app.use('/payment-requests', require('./routes/paymentRequests'));
 app.use('/super-admin',   require('./routes/superAdmin'));
 app.use('/hr',            requirePortal('admin'),     require('./routes/hr'));
+app.use('/ai',            require('./routes/ai'));
 
 // ── Health Check ──────────────────────────────────────────────────────────────
 app.get('/health', (req, res) => res.json({ status: 'ok', app: 'CareOpsX API v2' }));
@@ -76,6 +77,7 @@ require('./jobs/reminders');
 require('./jobs/followupScanner');
 require('./jobs/dropoffEngine');
 require('./jobs/stockAlerts');
+require('./jobs/trialExpiry');
 
 // Global JSON error handler — must be last middleware
 app.use((err, req, res, next) => {

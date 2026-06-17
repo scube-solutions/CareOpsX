@@ -29,6 +29,12 @@ export default function LoginPage() {
         body   : JSON.stringify(form)
       });
 
+      // Two-factor: a code was emailed — finish on the verification screen.
+      if (data.requires_2fa) {
+        window.location.href = `/verify-email?email=${encodeURIComponent(data.email || form.email)}&purpose=login`;
+        return;
+      }
+
       localStorage.setItem('token', data.token);
       localStorage.setItem('user',  JSON.stringify(data.user));
 
@@ -42,6 +48,9 @@ export default function LoginPage() {
         7: '/pharmacy/dashboard',
         8: '/admin/analytics',
         9: '/cxadmin/organizations',
+        10: '/doctor/dashboard',
+        11: '/admin/hr',
+        12: '/admin/billing',
       };
       window.location.href = routes[data.user.role_id] || '/login';
 

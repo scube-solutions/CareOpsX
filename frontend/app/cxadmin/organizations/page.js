@@ -212,7 +212,7 @@ export default function OrganizationsPage() {
             </div>
             {summary&&(
               <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fit,minmax(140px,1fr))',gap:12,marginBottom:24}}>
-                {[['Total',summary.total_organizations,'#0f1f3d'],['Active',summary.active,'#00b4a0'],['Paused',summary.paused,'#f59e0b'],['Suspended',summary.suspended,'#ef4444']].map(([l,v,c])=>(
+                {[['Total',summary.total_organizations,'#0f1f3d'],['Active',summary.active,'#00b4a0'],['Trial Expiring ≤2d',summary.trial_expiring_soon ?? 0,'#f59e0b'],['Trial Expired',summary.trial_expired ?? 0,'#dc2626'],['Paused',summary.paused,'#f59e0b'],['Suspended',summary.suspended,'#ef4444']].map(([l,v,c])=>(
                   <div key={l} style={{...S.card,borderTop:`4px solid ${c}`,textAlign:'center'}}>
                     <div style={{fontSize:11,color:'#64748b',fontWeight:700,textTransform:'uppercase',letterSpacing:'.06em'}}>{l}</div>
                     <div style={{fontSize:32,fontWeight:800,color:c,marginTop:6}}>{v}</div>
@@ -233,6 +233,13 @@ export default function OrganizationsPage() {
                     </div>
                     <div style={{fontWeight:800,fontSize:15,color:'#0f1f3d',marginBottom:4,textAlign:'left'}}>{org.organization_name}</div>
                     <div style={{fontSize:12,color:'#64748b',textAlign:'left'}}>{org.organization_code} · {org.active_users} users</div>
+                    {org.trial_days_left!=null&&(
+                      <div style={{marginTop:6,textAlign:'left'}}>
+                        <span style={{...S.badge,background:org.trial_expired?'#fef2f2':org.trial_days_left<=2?'#fffbeb':'#ecfdf5',color:org.trial_expired?'#dc2626':org.trial_days_left<=2?'#b45309':'#15803d',fontSize:11}}>
+                          {org.trial_expired?'Trial expired':`Trial: ${org.trial_days_left}d left`}
+                        </span>
+                      </div>
+                    )}
                   </button>
                 );
               })}

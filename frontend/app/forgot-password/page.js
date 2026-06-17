@@ -4,22 +4,40 @@ import { api } from '@/lib/api';
 
 export default function ForgotPasswordPage() {
   const [email,   setEmail]   = useState('');
+  const [otp,     setOtp]     = useState('');
+  const [pwd,     setPwd]     = useState('');
+  const [confirm, setConfirm] = useState('');
   const [msg,     setMsg]     = useState('');
   const [error,   setError]   = useState('');
   const [loading, setLoading] = useState(false);
-  const [sent,    setSent]    = useState(false);
+  const [step,    setStep]    = useState('email'); // email → otp → done
 
-  const submit = async () => {
+  // Step 1 — send a reset OTP to the email.
+  const sendCode = async () => {
     setError(''); setMsg('');
     if (!email) { setError('Email is required'); return; }
     setLoading(true);
     try {
-      const data = await api('/auth/forgot-password', {
-        method: 'POST',
-        body: JSON.stringify({ email }),
-      });
-      setMsg(data.message);
-      setSent(true);
+      const data = await api('/auth/send-otp', { method: 'POST', body: JSON.stringify({ email, purpose: 'reset' }) });
+      setMsg(data.dev_otp ? `Email delivery unavailable. Your code: ${data.dev_otp}` : 'A 6-digit reset code has been sent to your email.');
+      setStep('otp');
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // Step 2 — verify OTP + set the new password.
+  const submit = async () => {
+    setError('');
+    if (!otp || otp.length < 4) { setError('Enter the reset code'); return; }
+    if (pwd.length < 6) { setError('Password must be at least 6 characters'); return; }
+    if (pwd !== confirm) { setError('Passwords do not match'); return; }
+    setLoading(true);
+    try {
+      const data = await api('/auth/reset-password-otp', { method: 'POST', body: JSON.stringify({ email, otp, new_password: pwd }) });
+      setMsg(data.message); setStep('done');
     } catch (err) {
       setError(err.message);
     } finally {
@@ -50,12 +68,12 @@ export default function ForgotPasswordPage() {
         </div>
 
         <h1 style={s.title}>Forgot password?</h1>
-        <p style={s.sub}>Enter your registered email and we'll send a reset link.</p>
+        <p style={s.sub}>{step === 'otp' ? 'Enter the code we emailed you and choose a new password.' : "Enter your registered email and we'll send a reset code."}</p>
 
         {error && <div style={s.error}>{error}</div>}
         {msg   && <div style={s.success}>{msg}</div>}
 
-        {!sent ? (
+        {step === 'email' && (
           <>
             <div style={{ marginBottom: '1rem' }}>
               <label style={s.label}>Email Address</label>
@@ -65,20 +83,43 @@ export default function ForgotPasswordPage() {
                 placeholder="you@example.com"
                 value={email}
                 onChange={e => setEmail(e.target.value)}
-                onKeyDown={e => e.key === 'Enter' && submit()}
+                onKeyDown={e => e.key === 'Enter' && sendCode()}
               />
             </div>
-            <button style={{ ...s.btn, opacity: loading ? .7 : 1 }} onClick={submit} disabled={loading}>
-              {loading ? 'Sending…' : 'Send Reset Link'}
+            <button style={{ ...s.btn, opacity: loading ? .7 : 1 }} onClick={sendCode} disabled={loading}>
+              {loading ? 'Sending…' : 'Send Reset Code'}
             </button>
           </>
-        ) : (
-          <div style={{ textAlign: 'center', padding: '1rem 0' }}>
-            <div style={{ fontSize: 40, marginBottom: 8 }}>📧</div>
-            <p style={{ color: '#64748b', fontSize: '.9rem' }}>Check your inbox. The link expires in <strong>1 hour</strong>.</p>
-            <button onClick={() => { setSent(false); setMsg(''); setEmail(''); }} style={{ ...s.btn, marginTop: '1rem', background: '#f1f5f9', color: '#0f1f3d' }}>
-              Send again
+        )}
+
+        {step === 'otp' && (
+          <>
+            <div style={{ marginBottom: '.85rem' }}>
+              <label style={s.label}>Reset Code</label>
+              <input style={{ ...s.input, fontSize: '1.2rem', letterSpacing: '.4em', textAlign: 'center', fontWeight: 700 }}
+                value={otp} inputMode="numeric" maxLength={6} placeholder="••••••"
+                onChange={e => setOtp(e.target.value.replace(/\D/g, '').slice(0, 6))} />
+            </div>
+            <div style={{ marginBottom: '.85rem' }}>
+              <label style={s.label}>New Password</label>
+              <input style={s.input} type="password" placeholder="Min. 6 characters" value={pwd} onChange={e => setPwd(e.target.value)} />
+            </div>
+            <div style={{ marginBottom: '1rem' }}>
+              <label style={s.label}>Confirm Password</label>
+              <input style={s.input} type="password" placeholder="Repeat password" value={confirm} onChange={e => setConfirm(e.target.value)} onKeyDown={e => e.key === 'Enter' && submit()} />
+            </div>
+            <button style={{ ...s.btn, opacity: loading ? .7 : 1 }} onClick={submit} disabled={loading}>
+              {loading ? 'Resetting…' : 'Reset Password'}
             </button>
+            <p style={{ ...s.back, marginTop: '.9rem' }}><span onClick={sendCode} style={{ ...s.link, cursor: 'pointer' }}>Resend code</span></p>
+          </>
+        )}
+
+        {step === 'done' && (
+          <div style={{ textAlign: 'center', padding: '1rem 0' }}>
+            <div style={{ fontSize: 44, marginBottom: 8 }}>✅</div>
+            <p style={{ color: '#0f766e', fontWeight: 600 }}>Password reset!</p>
+            <a href="/login" style={{ ...s.btn, display: 'block', textAlign: 'center', marginTop: '1rem', textDecoration: 'none' }}>Go to Sign In</a>
           </div>
         )}
 

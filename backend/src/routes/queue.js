@@ -7,7 +7,11 @@ router.post('/token', verifyToken, requireRole([1, 5]), ctrl.generateQueueToken)
 router.get('/live/:doctor_id', verifyToken, ctrl.getLiveQueue);
 router.get('/lobby', ctrl.getLobbyDisplay); // public for display screen
 router.post('/next/:doctor_id', verifyToken, requireRole([1, 2]), ctrl.callNext);
+router.post('/token/:id/call', verifyToken, requireRole([1, 2]), ctrl.callPatient);
+router.post('/token/:id/recall', verifyToken, requireRole([1, 2]), ctrl.recallPatient);
 router.patch('/token/:id/status', verifyToken, requireRole([1, 2, 5]), ctrl.updateTokenStatus);
+router.get('/settings', ctrl.getQueueSettings); // readable by lobby (public) + admin
+router.put('/settings', verifyToken, requireRole([1]), ctrl.updateQueueSettings);
 router.post('/journey', verifyToken, ctrl.logPatientJourney);
 router.get('/journey', verifyToken, ctrl.getPatientJourney);
 

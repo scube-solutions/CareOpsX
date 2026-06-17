@@ -200,6 +200,31 @@ const sendOtpEmail = async (email, name, otp, purpose = 'verification') => {
   }
 };
 
+const sendInvitationEmail = async (email, name, activateUrl, orgName, roleName) => {
+  const subject = `You're invited to join ${orgName || 'CareOpsX'}`;
+  const text = `Hi ${name || 'there'},
+
+Welcome aboard! An administrator has created an account for you on ${orgName || 'CareOpsX'}.
+
+${roleName ? `Assigned Role : ${roleName}\n` : ''}Organization  : ${orgName || 'CareOpsX'}
+Login Email   : ${email}
+
+To activate your account and set your password, click the link below (valid for 48 hours):
+${activateUrl}
+
+If you were not expecting this invitation, you can safely ignore this email.
+
+CareOpsX Team`;
+  // Non-fatal: invite email delivery failure must not break employee creation.
+  try {
+    await sendEmail(email, subject, text);
+    return true;
+  } catch (err) {
+    console.warn('[notify] sendInvitationEmail failed:', err.message);
+    return false;
+  }
+};
+
 const notifyOrgOnboarded = async ({
   adminEmail, adminName, orgName, orgCode,
   loginUrl, portals, password,
@@ -236,10 +261,13 @@ Powered by Scube Solutions
 };
 
 module.exports = {
+  sendEmail,
+  sendSms,
   notifyBookingConfirmed,
   notifyBookingCancelled,
   notifyAppointmentReminder,
   sendPasswordResetEmail,
   sendOtpEmail,
+  sendInvitationEmail,
   notifyOrgOnboarded,
 };

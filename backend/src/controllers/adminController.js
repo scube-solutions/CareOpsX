@@ -1,14 +1,29 @@
+const crypto = require('crypto');
 const { auditLog } = require('../middlewares/audit');
-const { getOrganizationContext, ensurePortalEnabled, ensureSeatAvailable } = require('../utils/organizationAccess');
+const { getOrganizationContext, ensurePortalEnabled, ensureSeatAvailable, ROLE_LABELS } = require('../utils/organizationAccess');
+const { sendInvitationEmail } = require('../utils/notify');
+
+const FRONTEND_URL = process.env.FRONTEND_URL || 'http://localhost:3000';
 
 // ── Hospital Profile ──────────────────────────────────────────────────────────
 const getHospitalProfile = async (req, res) => {
   try {
     const supabase = req.db;
-    const { organizationId } = await getOrganizationContext(req);
+    const { organizationId, organization } = await getOrganizationContext(req);
     const { data, error } = await supabase.from('hospital_profile').select('*').eq('organization_id', organizationId).single();
     if (error && error.code !== 'PGRST116') throw error;
-    return res.json({ profile: data || {} });
+    // Include org-level info (registration date, plan/billing) for the Subscription tab
+    return res.json({
+      profile: data || {},
+      organization: organization ? {
+        id: organization.id,
+        organization_name: organization.organization_name,
+        created_at: organization.created_at,
+        billing_status: organization.billing_status,
+        payment_status: organization.payment_status,
+        trial_ends_at: organization.trial_ends_at || null,
+      } : null,
+    });
   } catch (err) {
     return res.status(500).json({ error: err.message });
   }
@@ -17,7 +32,7 @@ const getHospitalProfile = async (req, res) => {
 const upsertHospitalProfile = async (req, res) => {
   try {
     const supabase = req.db;
-    const { organizationId } = await getOrganizationContext(req);
+    const { organizationId, organization } = await getOrganizationContext(req);
     const payload = { ...req.body, updated_by: req.user.id, updated_at: new Date().toISOString() };
     const { data: existing } = await supabase.from('hospital_profile').select('id').eq('organization_id', organizationId).single();
     let result;
@@ -26,6 +41,11 @@ const upsertHospitalProfile = async (req, res) => {
       if (error) throw error;
       result = data;
     } else {
+      // First-time insert: hospital_name is NOT NULL — fall back to the org name so
+      // partial saves (e.g. logo-only upload) don't fail.
+      if (!payload.hospital_name || !String(payload.hospital_name).trim()) {
+        payload.hospital_name = organization?.organization_name || 'Hospital';
+      }
       const { data, error } = await supabase.from('hospital_profile').insert([{ ...payload, organization_id: organizationId, created_by: req.user.id }]).select('*').single();
       if (error) throw error;
       result = data;
@@ -258,12 +278,25 @@ const getUsers = async (req, res) => {
   try {
     const supabase = req.db;
     const { organizationId } = await getOrganizationContext(req);
-    const { data, error } = await supabase.from('users').select('id, first_name, last_name, email, phone, role_id, roles, is_active, branch_id, organization_id, created_at').eq('organization_id', organizationId).order('created_at', { ascending: false });
+    // Join staff_profiles so HRMS-sourced fields (employee_id, department,
+    // designation, employment_status) surface in User Management.
+    const { data, error } = await supabase.from('users')
+      .select('id, first_name, last_name, email, phone, role_id, roles, is_active, account_status, invite_status, last_login_at, two_factor_enabled, branch_id, organization_id, created_at, staff_profiles(employee_id, department, designation, employment_status)')
+      .eq('organization_id', organizationId)
+      .order('created_at', { ascending: false });
     if (error) throw error;
-    const usersWithRoles = (data || []).map(u => ({
-      ...u,
-      roles: Array.isArray(u.roles) && u.roles.length ? u.roles : [u.role_id],
-    }));
+    const usersWithRoles = (data || []).map(u => {
+      const staff = Array.isArray(u.staff_profiles) ? u.staff_profiles[0] : u.staff_profiles;
+      return {
+        ...u,
+        roles: Array.isArray(u.roles) && u.roles.length ? u.roles : [u.role_id],
+        employee_id      : staff?.employee_id || null,
+        department       : staff?.department || null,
+        designation      : staff?.designation || null,
+        employment_status: staff?.employment_status || null,
+        staff_profiles   : undefined,
+      };
+    });
     return res.json({ users: usersWithRoles });
   } catch (err) {
     return res.status(500).json({ error: err.message });
@@ -274,20 +307,63 @@ const createUser = async (req, res) => {
   try {
     const supabase = req.db;
     const bcrypt = require('bcryptjs');
-    const { organizationId, portalAccess, seatLimits } = await getOrganizationContext(req);
-    const { first_name, last_name, email, phone, password, role_id, roles, branch_id } = req.body;
-    if (!email || !password || !first_name || !last_name) return res.status(400).json({ error: 'Required fields missing' });
-    const { data: existing } = await supabase.from('users').select('id').eq('email', email).maybeSingle();
+    const { organizationId, organization, portalAccess, seatLimits } = await getOrganizationContext(req);
+    const { first_name, last_name, email, phone, password, role_id, roles, branch_id, department, designation, send_invite } = req.body;
+    // Invitation-based onboarding: no password needed when sending an invite.
+    const invite = !!send_invite || !password;
+    if (!email || !first_name || !last_name) return res.status(400).json({ error: 'Required fields missing' });
+    if (!invite && !password) return res.status(400).json({ error: 'Password is required' });
+
+    const { data: existing } = await supabase.from('users').select('id').ilike('email', email).maybeSingle();
     if (existing) return res.status(409).json({ error: 'Email already exists' });
-    const password_hash = await bcrypt.hash(password, 10);
+    // Mobile uniqueness (excluding patient accounts which may share numbers).
+    if (phone) {
+      const { data: dupPhone } = await supabase.from('users').select('id').eq('phone', phone).neq('role_id', 3).maybeSingle();
+      if (dupPhone) return res.status(409).json({ error: 'Mobile number already exists' });
+    }
+
     const primaryRole = role_id || (Array.isArray(roles) && roles[0]) || 5;
     const userRoles = Array.isArray(roles) && roles.length ? roles : [primaryRole];
     const portalCheck = ensurePortalEnabled(portalAccess, primaryRole);
     if (!portalCheck.ok) return res.status(403).json({ error: portalCheck.message });
     const seatCheck = await ensureSeatAvailable({ organizationId, seatLimits, roleId: primaryRole });
     if (!seatCheck.ok) return res.status(409).json({ error: seatCheck.message });
-    const { data, error } = await supabase.from('users').insert([{ first_name, last_name, email, phone: phone || null, password_hash, role_id: primaryRole, roles: userRoles, branch_id: branch_id || null, organization_id: organizationId, is_active: true, created_by: req.user.id }]).select('id, first_name, last_name, email, phone, role_id, roles, is_active, branch_id, organization_id, created_at').single();
+
+    // For invited users, store an unusable hash + an activation token, and keep
+    // the account inactive until they activate. Otherwise create an active login.
+    const password_hash = await bcrypt.hash(invite ? crypto.randomBytes(24).toString('hex') : password, 10);
+    const inviteToken = invite ? crypto.randomBytes(32).toString('hex') : null;
+    const inviteExpiry = invite ? new Date(Date.now() + 48 * 60 * 60 * 1000).toISOString() : null;
+
+    const { data, error } = await supabase.from('users').insert([{
+      first_name, last_name, email, phone: phone || null, password_hash,
+      role_id: primaryRole, roles: userRoles, branch_id: branch_id || null,
+      organization_id: organizationId,
+      is_active: !invite,
+      email_verified: !invite,
+      account_status: invite ? 'pending_activation' : 'active',
+      invite_status: invite ? 'invited' : 'active',
+      invite_token: inviteToken, invite_token_expiry: inviteExpiry,
+      created_by: req.user.id,
+    }]).select('id, first_name, last_name, email, phone, role_id, roles, is_active, account_status, invite_status, branch_id, organization_id, created_at').single();
     if (error) throw error;
+
+    // Mirror to an employee record so HRMS ↔ User Management stay in sync.
+    const { data: existingStaff } = await supabase.from('staff_profiles').select('id').eq('user_id', data.id).maybeSingle();
+    if (!existingStaff) {
+      await supabase.from('staff_profiles').insert([{
+        organization_id: organizationId, user_id: data.id,
+        full_name: `${first_name} ${last_name}`.trim(), email, mobile: phone || null,
+        department: department || null, designation: designation || null, role_id: primaryRole,
+        employment_status: invite ? 'Inactive' : 'Active', is_active: !invite,
+      }]).catch(() => {});
+    }
+
+    // Auto-send the invitation email on creation.
+    if (invite) {
+      const url = `${FRONTEND_URL}/activate?token=${inviteToken}`;
+      await sendInvitationEmail(email, `${first_name} ${last_name}`.trim(), url, organization?.organization_name, ROLE_LABELS[primaryRole]);
+    }
 
     // Auto-create a doctor profile so the user shows on the Doctors page immediately
     if (userRoles.includes(2)) {
@@ -306,7 +382,7 @@ const createUser = async (req, res) => {
     }
 
     await auditLog({ user_id: req.user.id, role_id: req.user.role_id, organization_id: req.user.organization_id || null, action: 'CREATE_USER', module: 'Admin', entity_type: 'user', entity_id: data.id });
-    return res.status(201).json({ message: 'User created', user: data });
+    return res.status(201).json({ message: invite ? 'User created and invitation sent' : 'User created', user: data });
   } catch (err) {
     return res.status(500).json({ error: err.message });
   }
@@ -348,6 +424,20 @@ const updateUser = async (req, res) => {
       }
     }
 
+    // Reverse-sync role / name / contact / status to the linked employee record.
+    const staffPatch = {};
+    if (data.first_name || data.last_name) staffPatch.full_name = `${data.first_name || ''} ${data.last_name || ''}`.trim();
+    if (rest.email !== undefined)  staffPatch.email = data.email;
+    if (rest.phone !== undefined)  staffPatch.mobile = data.phone;
+    if (Array.isArray(roles) && roles.length) staffPatch.role_id = data.role_id;
+    if (rest.is_active !== undefined) {
+      staffPatch.is_active = data.is_active;
+      staffPatch.employment_status = data.is_active ? 'Active' : 'Inactive';
+    }
+    if (Object.keys(staffPatch).length) {
+      await supabase.from('staff_profiles').update(staffPatch).eq('user_id', req.params.id).eq('organization_id', organizationId);
+    }
+
     await auditLog({ user_id: req.user.id, role_id: req.user.role_id, organization_id: req.user.organization_id || null, action: 'UPDATE_USER', module: 'Admin', entity_type: 'user', entity_id: req.params.id });
     return res.json({ message: 'User updated', user: data });
   } catch (err) {
@@ -361,8 +451,13 @@ const toggleUserActive = async (req, res) => {
     const { organizationId } = await getOrganizationContext(req);
     const { data: user } = await supabase.from('users').select('is_active').eq('id', req.params.id).eq('organization_id', organizationId).single();
     if (!user) return res.status(404).json({ error: 'User not found' });
-    const { data, error } = await supabase.from('users').update({ is_active: !user.is_active, updated_by: req.user.id }).eq('id', req.params.id).eq('organization_id', organizationId).select('id, is_active').single();
+    const next = !user.is_active;
+    const { data, error } = await supabase.from('users').update({ is_active: next, account_status: next ? 'active' : 'inactive', updated_by: req.user.id }).eq('id', req.params.id).eq('organization_id', organizationId).select('id, is_active, account_status').single();
     if (error) throw error;
+    // Keep the linked employee record's status in sync.
+    await supabase.from('staff_profiles')
+      .update({ is_active: data.is_active, employment_status: data.is_active ? 'Active' : 'Inactive' })
+      .eq('user_id', req.params.id).eq('organization_id', organizationId);
     await auditLog({ user_id: req.user.id, role_id: req.user.role_id, organization_id: req.user.organization_id || null, action: data.is_active ? 'UNLOCK_USER' : 'LOCK_USER', module: 'Admin', entity_type: 'user', entity_id: req.params.id });
     return res.json({ message: `User ${data.is_active ? 'activated' : 'locked'}`, user: data });
   } catch (err) {
@@ -488,6 +583,105 @@ const resetUserPassword = async (req, res) => {
   } catch (err) {
     return res.status(500).json({ error: err.message });
   }
+};
+
+// ── User status (Active / Inactive / Suspended) ───────────────────────────────
+const USER_STATUSES = ['active', 'inactive', 'suspended', 'pending_invitation', 'pending_activation'];
+const setUserStatus = async (req, res) => {
+  try {
+    const supabase = req.db;
+    const { organizationId } = await getOrganizationContext(req);
+    const { status } = req.body;
+    if (!USER_STATUSES.includes(status)) return res.status(400).json({ error: `status must be one of: ${USER_STATUSES.join(', ')}` });
+    if (req.params.id === req.user.id && status !== 'active') return res.status(400).json({ error: 'You cannot change the status of your own account' });
+    const isActive = status === 'active';
+    const { data, error } = await supabase.from('users')
+      .update({ account_status: status, is_active: isActive, updated_by: req.user.id })
+      .eq('id', req.params.id).eq('organization_id', organizationId)
+      .select('id, account_status, is_active').single();
+    if (error) throw error;
+    await supabase.from('staff_profiles')
+      .update({ is_active: isActive, employment_status: isActive ? 'Active' : (status === 'suspended' ? 'Suspended' : 'Inactive') })
+      .eq('user_id', req.params.id).eq('organization_id', organizationId);
+    await auditLog({ user_id: req.user.id, role_id: req.user.role_id, organization_id: req.user.organization_id || null, action: `STATUS_${status.toUpperCase()}`, module: 'Admin', entity_type: 'user', entity_id: req.params.id });
+    return res.json({ message: `User status set to ${status}`, user: data });
+  } catch (err) { return res.status(500).json({ error: err.message }); }
+};
+
+// Send / re-send an account-activation invitation from User Management.
+const inviteUser = async (req, res) => {
+  try {
+    const supabase = req.db;
+    const { organizationId, organization } = await getOrganizationContext(req);
+    const { data: user, error } = await supabase.from('users')
+      .select('id, first_name, last_name, email, role_id, invite_status')
+      .eq('id', req.params.id).eq('organization_id', organizationId).single();
+    if (error || !user) return res.status(404).json({ error: 'User not found' });
+    if (user.invite_status === 'active') return res.status(409).json({ error: 'This account is already activated' });
+
+    const token = crypto.randomBytes(32).toString('hex');
+    const expiry = new Date(Date.now() + 48 * 60 * 60 * 1000).toISOString();
+    await supabase.from('users').update({ invite_token: token, invite_token_expiry: expiry, invite_status: 'invited', account_status: 'pending_activation' }).eq('id', user.id);
+
+    const url = `${FRONTEND_URL}/activate?token=${token}`;
+    const sent = await sendInvitationEmail(user.email, `${user.first_name} ${user.last_name}`.trim(), url, organization?.organization_name, ROLE_LABELS[user.role_id]);
+    await auditLog({ user_id: req.user.id, role_id: req.user.role_id, organization_id: req.user.organization_id || null, action: 'INVITE_USER', module: 'Admin', entity_type: 'user', entity_id: user.id });
+    return res.json({
+      message: sent ? 'Invitation sent' : 'Invitation created — email delivery unavailable, share the link manually.',
+      ...(!sent && process.env.NODE_ENV !== 'production' ? { activate_url: url } : {}),
+    });
+  } catch (err) { return res.status(500).json({ error: err.message }); }
+};
+
+// ── RBAC Permission Matrix ────────────────────────────────────────────────────
+const { MODULES, ACTIONS, getEffectivePermissions, getEffectivePermissionsForRoles, rolesOf } = require('../utils/permissions');
+
+// Effective grid for every manageable role in this org (defaults + overrides).
+const getPermissionMatrix = async (req, res) => {
+  try {
+    const { organizationId } = await getOrganizationContext(req);
+    const roleIds = [1, 2, 5, 6, 7, 8, 10, 11, 12];
+    const matrix = {};
+    for (const r of roleIds) matrix[r] = await getEffectivePermissions(organizationId, r);
+    return res.json({ modules: MODULES, actions: ACTIONS, roles: roleIds, matrix });
+  } catch (err) { return res.status(500).json({ error: err.message }); }
+};
+
+// Upsert override rows for a single role.
+const updateRolePermissions = async (req, res) => {
+  try {
+    const supabase = req.db;
+    const { organizationId } = await getOrganizationContext(req);
+    const roleId = Number(req.params.roleId);
+    if (roleId === 1 || roleId === 9) return res.status(400).json({ error: 'Admin and Super Admin always have full access and cannot be edited' });
+    const { permissions } = req.body; // { module: { view, create, edit, delete, approve } }
+    if (!permissions || typeof permissions !== 'object') return res.status(400).json({ error: 'permissions object is required' });
+
+    const rows = MODULES
+      .filter(m => permissions[m])
+      .map(m => ({
+        organization_id: organizationId, role_id: roleId, module: m,
+        can_view: !!permissions[m].view, can_create: !!permissions[m].create,
+        can_edit: !!permissions[m].edit, can_delete: !!permissions[m].delete,
+        can_approve: !!permissions[m].approve,
+        updated_by: req.user.id, updated_at: new Date().toISOString(),
+      }));
+    if (rows.length) {
+      const { error } = await supabase.from('role_permissions').upsert(rows, { onConflict: 'organization_id,role_id,module' });
+      if (error) throw error;
+    }
+    await auditLog({ user_id: req.user.id, role_id: req.user.role_id, organization_id: req.user.organization_id || null, action: 'UPDATE_PERMISSIONS', module: 'Admin', entity_type: 'role', entity_id: roleId });
+    return res.json({ message: 'Permissions updated' });
+  } catch (err) { return res.status(500).json({ error: err.message }); }
+};
+
+// Current user's own effective permission grid — used for frontend menu gating.
+const getMyPermissions = async (req, res) => {
+  try {
+    const { organizationId } = await getOrganizationContext(req);
+    const grid = await getEffectivePermissionsForRoles(organizationId, rolesOf(req.user));
+    return res.json({ permissions: grid, modules: MODULES, actions: ACTIONS });
+  } catch (err) { return res.status(500).json({ error: err.message }); }
 };
 
 // ── Lab Test Catalog ──────────────────────────────────────────────────────────
@@ -642,6 +836,7 @@ module.exports = {
   getDoctorLeaves, createDoctorLeave, deleteDoctorLeave,
   uploadLogo,
   getUsers, createUser, updateUser, toggleUserActive, deleteUser, bulkDeleteUsers, resetUserPassword,
+  setUserStatus, inviteUser, getPermissionMatrix, updateRolePermissions, getMyPermissions,
   getLabTestCatalog, createLabTest, updateLabTest, deleteLabTest,
   getSpecializations, createSpecialization, toggleSpecialization, deleteSpecialization,
   getRooms, createRoom, updateRoom, deleteRoom,

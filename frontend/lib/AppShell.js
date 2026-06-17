@@ -5,6 +5,7 @@ import { usePathname, useRouter } from 'next/navigation';
 import { clearAuth } from '@/lib/auth';
 import { api } from '@/lib/api';
 import RoleSwitcher from '@/lib/RoleSwitcher';
+import AIAssistant from '@/lib/AIAssistant';
 
 const theme = {
   teal: '#00b4a0',
@@ -408,6 +409,9 @@ export default function AppShell({ title, roleLabel, currentRole, groups, user, 
 
         {children}
       </main>
+
+      {/* Global AI Organizational Assistant */}
+      <AIAssistant />
     </div>
   );
 }

@@ -39,6 +39,15 @@ router.put('/users/:id', ...adminOnly, ctrl.updateUser);
 router.patch('/users/:id/toggle', ...adminOnly, ctrl.toggleUserActive);
 router.delete('/users/:id', ...adminOnly, ctrl.deleteUser);
 router.post('/users/:id/reset-password', ...adminOnly, ctrl.resetUserPassword);
+router.patch('/users/:id/status', ...adminOnly, ctrl.setUserStatus);
+router.post('/users/:id/invite', ...adminOnly, ctrl.inviteUser);
+
+// My effective permissions (any authenticated user) — for menu gating
+router.get('/my-permissions', verifyToken, ctrl.getMyPermissions);
+
+// RBAC permission matrix
+router.get('/permissions', ...adminOnly, ctrl.getPermissionMatrix);
+router.put('/permissions/:roleId', ...adminOnly, ctrl.updateRolePermissions);
 
 // Lab test catalog
 router.get('/lab-tests', verifyToken, ctrl.getLabTestCatalog);

@@ -56,10 +56,17 @@ function SubscriptionTab() {
   const status    = billingInfo?.billing_status || 'trial';
   const planMeta  = PLANS[status] || PLANS.trial;
   const features  = PLAN_FEATURES[status] || PLAN_FEATURES.trial;
-  const startDate = billingInfo ? new Date(billingInfo.created_at) : new Date();
   const trialDays = billingInfo?.trial_days || 7;
-  const endDate   = new Date(startDate.getTime() + trialDays * 86400000);
-  const daysLeft  = Math.max(0, Math.ceil((endDate - Date.now()) / 86400000));
+
+  // Calendar-day math (ignore time-of-day so "days left" matches the dates shown)
+  const dayMid    = (d) => new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
+  const startDate = billingInfo ? new Date(billingInfo.created_at) : new Date();
+  const startMid  = dayMid(startDate);
+  const todayMid  = dayMid(new Date());
+  const daysElapsed = Math.max(0, Math.floor((todayMid - startMid) / 86400000));
+  const daysLeft  = Math.max(0, trialDays - daysElapsed);
+  const dayNumber = Math.min(trialDays, daysElapsed + 1);
+  const endDate   = new Date(startMid + trialDays * 86400000);
   const pct       = Math.min(100, Math.max(0, (daysLeft / trialDays) * 100));
   const barColor  = daysLeft <= 2 ? '#ef4444' : daysLeft <= 4 ? '#f59e0b' : '#00b4a0';
 
@@ -177,12 +184,25 @@ function SubscriptionTab() {
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#64748b" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
           <span style={{ fontWeight: 700, fontSize: 14, color: '#0f1f3d' }}>Time Remaining</span>
         </div>
-        <div style={{ height: 10, background: '#f1f5f9', borderRadius: 99, overflow: 'hidden', marginBottom: 10 }}>
-          <div style={{ height: '100%', width: `${pct}%`, background: barColor, borderRadius: 99, transition: 'width 0.5s' }} />
+        {/* Day-wise segmented bar — one notch per day; elapsed days turn gray */}
+        <div style={{ display: 'flex', gap: 4, marginBottom: 10 }}>
+          {Array.from({ length: trialDays }).map((_, i) => {
+            const isRemaining = i < daysLeft;
+            return (
+              <div
+                key={i}
+                title={isRemaining ? `Day ${i + 1} — remaining` : `Day ${i + 1} — used`}
+                style={{ flex: 1, height: 10, borderRadius: 4, background: isRemaining ? barColor : '#e2e8f0', transition: 'background 0.4s' }}
+              />
+            );
+          })}
         </div>
-        <p style={{ margin: 0, fontSize: 14, color: '#475569' }}>
-          You have <strong style={{ color: barColor }}>{daysLeft} {daysLeft === 1 ? 'day' : 'days'}</strong> remaining.
-        </p>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+          <p style={{ margin: 0, fontSize: 14, color: '#475569' }}>
+            You have <strong style={{ color: barColor }}>{daysLeft} {daysLeft === 1 ? 'day' : 'days'}</strong> remaining.
+          </p>
+          <span style={{ fontSize: 12, color: '#94a3b8', fontWeight: 600 }}>Day {dayNumber} of {trialDays}</span>
+        </div>
       </div>
 
       {/* Pricing Cards */}
@@ -285,7 +305,167 @@ function RolePermissionsGuide() {
   );
 }
 
-const TABS = ['Profile', 'Organization', 'User Management', 'Subscription', 'Audit Logs'];
+const PERM_ROLE_LABELS = { 1: 'Admin', 2: 'Doctor', 5: 'Receptionist', 6: 'Lab Tech', 7: 'Pharmacist', 8: 'Reporting', 10: 'Nurse', 11: 'HR Manager', 12: 'Billing' };
+
+// RBAC permission matrix editor — module × action grid per role.
+function PermissionsTab({ setMsg }) {
+  const [data, setData]       = useState(null); // { modules, actions, roles, matrix }
+  const [activeRole, setActiveRole] = useState(2);
+  const [draft, setDraft]     = useState(null);
+  const [saving, setSaving]   = useState(false);
+
+  useEffect(() => {
+    (async () => {
+      try { const d = await api('/admin/permissions'); setData(d); }
+      catch (e) { setMsg(e.message); }
+    })();
+  }, []);
+
+  useEffect(() => {
+    if (data?.matrix?.[activeRole]) setDraft(JSON.parse(JSON.stringify(data.matrix[activeRole])));
+  }, [data, activeRole]);
+
+  if (!data || !draft) return <div style={s.card}>Loading permissions…</div>;
+
+  const isFullAccess = activeRole === 1; // Admin always full
+  const toggle = (mod, act) => setDraft(d => ({ ...d, [mod]: { ...d[mod], [act]: !d[mod][act] } }));
+
+  const save = async () => {
+    setSaving(true);
+    try {
+      await api(`/admin/permissions/${activeRole}`, { method: 'PUT', body: JSON.stringify({ permissions: draft }) });
+      setMsg('Permissions updated'); const d = await api('/admin/permissions'); setData(d);
+    } catch (e) { setMsg(e.message); } finally { setSaving(false); }
+  };
+
+  return (
+    <div style={s.card}>
+      <h2 style={s.h2}>Role Permissions</h2>
+      <p style={{ fontSize: 13, color: '#64748b', marginTop: -6, marginBottom: 16 }}>Control View / Create / Edit / Delete / Approve access per module for each role. Admin and Super Admin always have full access.</p>
+
+      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginBottom: 18 }}>
+        {data.roles.filter(r => r !== 1).map(r => (
+          <button key={r} onClick={() => setActiveRole(r)} style={{ padding: '7px 14px', borderRadius: 8, fontSize: 13, fontWeight: activeRole === r ? 700 : 500, cursor: 'pointer', border: `1.5px solid ${activeRole === r ? '#00b4a0' : '#e2e8f0'}`, background: activeRole === r ? '#f0fdfb' : '#fff', color: activeRole === r ? '#00b4a0' : '#475569' }}>
+            {PERM_ROLE_LABELS[r] || `Role ${r}`}
+          </button>
+        ))}
+      </div>
+
+      <table style={s.table}>
+        <thead><tr>{['Module', ...data.actions].map(h => <th key={h} style={{ ...s.th, textTransform: 'capitalize' }}>{h}</th>)}</tr></thead>
+        <tbody>
+          {data.modules.map(mod => (
+            <tr key={mod}>
+              <td style={{ ...s.td, fontWeight: 600, textTransform: 'capitalize' }}>{mod}</td>
+              {data.actions.map(act => (
+                <td key={act} style={{ ...s.td, textAlign: 'center' }}>
+                  <input type="checkbox" disabled={isFullAccess} checked={isFullAccess ? true : !!draft[mod]?.[act]}
+                    onChange={() => toggle(mod, act)} style={{ accentColor: '#00b4a0', width: 16, height: 16, cursor: isFullAccess ? 'not-allowed' : 'pointer' }} />
+                </td>
+              ))}
+            </tr>
+          ))}
+        </tbody>
+      </table>
+
+      {!isFullAccess && (
+        <div style={{ marginTop: 16 }}>
+          <button onClick={save} disabled={saving} style={{ ...s.btnPri, opacity: saving ? .6 : 1 }}>{saving ? 'Saving…' : 'Save Permissions'}</button>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// Queue Management + Voice Announcement settings.
+function QueueVoiceTab({ setMsg }) {
+  const [s, setS]       = useState(null);
+  const [voices, setVoices] = useState([]);
+  const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    api('/queue/settings').then(r => setS(r.settings)).catch(e => setMsg(e.message));
+    if (typeof window !== 'undefined' && window.speechSynthesis) {
+      const load = () => setVoices(window.speechSynthesis.getVoices() || []);
+      load(); window.speechSynthesis.onvoiceschanged = load;
+    }
+  }, []);
+
+  if (!s) return <div style={s2.card}>Loading…</div>;
+  const set = (k, v) => setS(p => ({ ...p, [k]: v }));
+
+  const save = async () => {
+    setSaving(true);
+    try { await api('/queue/settings', { method: 'PUT', body: JSON.stringify(s) }); setMsg('Queue & voice settings saved'); }
+    catch (e) { setMsg(e.message); } finally { setSaving(false); }
+  };
+
+  const test = () => {
+    if (!window.speechSynthesis) { setMsg('Speech not supported in this browser'); return; }
+    const u = new SpeechSynthesisUtterance(
+      (s.announce_template || '').replace('{token}', 'A-105').replace('{name}', 'Ramesh Kumar').replace('{doctor}', 'Doctor Rajesh Kumar').replace('{room}', '3'));
+    const v = voices.find(v => v.name === s.voice_name);
+    if (v) u.voice = v;
+    u.lang = s.voice_lang || 'en-IN'; u.volume = Number(s.volume); u.rate = Number(s.rate); u.pitch = Number(s.pitch);
+    window.speechSynthesis.speak(u);
+  };
+
+  const field = (label, el) => <div style={s2.fg}><label style={s2.label}>{label}</label>{el}</div>;
+
+  return (
+    <div style={s2.card}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
+        <h2 style={s2.h2}>Queue &amp; Voice Announcements</h2>
+        <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 14, fontWeight: 600, cursor: 'pointer' }}>
+          <input type="checkbox" checked={!!s.voice_enabled} onChange={e => set('voice_enabled', e.target.checked)} style={{ accentColor: '#00b4a0', width: 18, height: 18 }} />
+          Voice Announcements {s.voice_enabled ? 'Enabled' : 'Disabled'}
+        </label>
+      </div>
+
+      <div style={s2.grid3}>
+        {field('Voice', (
+          <select value={s.voice_name || ''} onChange={e => set('voice_name', e.target.value || null)} style={s2.input}>
+            <option value="">Auto (by language / gender)</option>
+            {voices.map(v => <option key={v.name} value={v.name}>{v.name} ({v.lang})</option>)}
+          </select>
+        ))}
+        {field('Language', <input value={s.voice_lang || ''} onChange={e => set('voice_lang', e.target.value)} style={s2.input} placeholder="en-IN" />)}
+        {field('Gender (hint)', (
+          <select value={s.voice_gender || 'female'} onChange={e => set('voice_gender', e.target.value)} style={s2.input}>
+            <option value="female">Female</option><option value="male">Male</option>
+          </select>
+        ))}
+        {field(`Volume (${Number(s.volume).toFixed(1)})`, <input type="range" min="0" max="1" step="0.1" value={s.volume} onChange={e => set('volume', e.target.value)} style={{ width: '100%' }} />)}
+        {field(`Speed (${Number(s.rate).toFixed(1)})`, <input type="range" min="0.5" max="1.5" step="0.1" value={s.rate} onChange={e => set('rate', e.target.value)} style={{ width: '100%' }} />)}
+        {field(`Pitch (${Number(s.pitch).toFixed(1)})`, <input type="range" min="0.5" max="1.5" step="0.1" value={s.pitch} onChange={e => set('pitch', e.target.value)} style={{ width: '100%' }} />)}
+        {field('Repeat Count', <input type="number" min="1" max="5" value={s.repeat_count} onChange={e => set('repeat_count', Number(e.target.value))} style={s2.input} />)}
+        {field('Repeat Interval (sec)', <input type="number" min="3" max="60" value={s.repeat_interval_sec} onChange={e => set('repeat_interval_sec', Number(e.target.value))} style={s2.input} />)}
+      </div>
+      {field('Announcement Template', <input value={s.announce_template || ''} onChange={e => set('announce_template', e.target.value)} style={s2.input} />)}
+      <div style={{ fontSize: 11, color: '#94a3b8', marginTop: 4 }}>Placeholders: {'{token}'} {'{name}'} {'{doctor}'} {'{room}'}</div>
+
+      <div style={{ display: 'flex', gap: 10, marginTop: 16 }}>
+        <button onClick={save} disabled={saving} style={s2.btnPri}>{saving ? 'Saving…' : 'Save Settings'}</button>
+        <button onClick={test} style={s2.btnSec}>🔊 Test Voice</button>
+      </div>
+      <div style={{ fontSize: 12, color: '#64748b', marginTop: 12 }}>
+        Note: available voices depend on the lobby display device&apos;s browser/OS. Pick a voice installed on that machine.
+      </div>
+    </div>
+  );
+}
+const s2 = {
+  card: { background: '#fff', borderRadius: 14, padding: '1.75rem', boxShadow: '0 1px 3px rgba(0,0,0,0.08)', border: '1px solid #e2e8f0' },
+  h2: { fontSize: '1.1rem', fontWeight: 700, color: '#0f1f3d', margin: 0 },
+  grid3: { display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 16, marginBottom: 12 },
+  fg: { display: 'flex', flexDirection: 'column', marginBottom: 10 },
+  label: { fontSize: '.75rem', fontWeight: 700, color: '#64748b', textTransform: 'uppercase', marginBottom: 6 },
+  input: { width: '100%', padding: '.6rem .8rem', border: '1.5px solid #e2e8f0', borderRadius: 8, fontSize: '.9rem', boxSizing: 'border-box' },
+  btnPri: { padding: '.7rem 1.4rem', background: '#00b4a0', color: '#fff', border: 'none', borderRadius: 8, fontWeight: 700, cursor: 'pointer' },
+  btnSec: { padding: '.7rem 1.4rem', background: '#fff', color: '#0f1f3d', border: '1.5px solid #e2e8f0', borderRadius: 8, fontWeight: 600, cursor: 'pointer' },
+};
+
+const TABS = ['Profile', 'Organization', 'User Management', 'Permissions', 'Subscription', 'Audit Logs', 'Queue & Voice'];
 
 export default function SetupPage() {
   const [tab, setTab] = useState(0);
@@ -388,7 +568,23 @@ export default function SetupPage() {
   useEffect(() => { loadAll(); }, []);
 
   const ORG_TABS = ['Branches', 'Departments', 'Room Management', 'Lab Tests', 'Specializations'];
-  const ROLE_OPTIONS = [{ value: 1, label: 'Admin' }, { value: 2, label: 'Doctor' }, { value: 5, label: 'Receptionist' }, { value: 6, label: 'Lab Staff' }, { value: 7, label: 'Pharmacist' }, { value: 8, label: 'Reporting' }];
+  const ROLE_OPTIONS = [{ value: 1, label: 'Admin' }, { value: 2, label: 'Doctor' }, { value: 10, label: 'Nurse' }, { value: 5, label: 'Receptionist' }, { value: 6, label: 'Lab Staff' }, { value: 7, label: 'Pharmacist' }, { value: 12, label: 'Billing Executive' }, { value: 11, label: 'HR Manager' }, { value: 8, label: 'Reporting' }];
+
+  const inviteUser = async (u) => {
+    try { const d = await api(`/admin/users/${u.id}/invite`, { method: 'POST' }); setMsg(d.message + (d.activate_url ? ` — ${d.activate_url}` : '')); await loadAll(); }
+    catch (e) { setMsg(e.message); }
+  };
+  const setStatus = async (u, status) => {
+    try { await api(`/admin/users/${u.id}/status`, { method: 'PATCH', body: JSON.stringify({ status }) }); setMsg(`Status set to ${status}`); await loadAll(); }
+    catch (e) { setMsg(e.message); }
+  };
+  const STATUS_STYLE = {
+    active:             ['#f0fdf4', '#065f46', 'Active'],
+    inactive:          ['#fef2f2', '#dc2626', 'Inactive'],
+    suspended:         ['#fef2f2', '#b91c1c', 'Suspended'],
+    pending_activation:['#fffbeb', '#92400e', 'Pending Activation'],
+    pending_invitation:['#eff6ff', '#1d4ed8', 'Pending Invitation'],
+  };
 
   return (
     <div style={s.page}>
@@ -778,11 +974,11 @@ export default function SetupPage() {
             <div style={{ ...s.card, marginBottom: 16, borderLeft: '4px solid #00b4a0' }}>
               <h2 style={s.h2}>{editingUser ? 'Edit User' : 'New User'}</h2>
               <div style={s.grid3}>
-                {[['First Name', 'first_name'], ['Last Name', 'last_name'], ['Email', 'email'], ['Phone', 'phone'], ['Password', 'password']].map(([l, k]) => (
+                {[['First Name', 'first_name'], ['Last Name', 'last_name'], ['Email', 'email'], ['Phone', 'phone'], ['Department', 'department'], ['Designation', 'designation']].map(([l, k]) => (
                   <div key={k} style={s.fg}>
                     <label style={s.label}>{l}</label>
                     <input
-                      type={k === 'password' ? 'password' : 'text'}
+                      type="text"
                       value={form[k] || ''}
                       onChange={e => { setForm({ ...form, [k]: e.target.value }); if (formError[k]) setFormError({ ...formError, [k]: '' }); }}
                       style={{ ...s.input, ...(formError[k] ? { borderColor: '#ef4444', background: '#fef2f2' } : {}) }}
@@ -790,7 +986,28 @@ export default function SetupPage() {
                     {formError[k] && <span style={{ color: '#ef4444', fontSize: 12, fontWeight: 600, marginTop: 4, display: 'block' }}>{formError[k]}</span>}
                   </div>
                 ))}
+                {!editingUser && !form.send_invite && (
+                  <div style={s.fg}>
+                    <label style={s.label}>Password</label>
+                    <input type="password" value={form.password || ''}
+                      onChange={e => { setForm({ ...form, password: e.target.value }); if (formError.password) setFormError({ ...formError, password: '' }); }}
+                      style={{ ...s.input, ...(formError.password ? { borderColor: '#ef4444', background: '#fef2f2' } : {}) }} />
+                    {formError.password && <span style={{ color: '#ef4444', fontSize: 12, fontWeight: 600, marginTop: 4, display: 'block' }}>{formError.password}</span>}
+                  </div>
+                )}
               </div>
+              {!editingUser && (
+                <label style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 10, fontSize: 13, color: '#0f766e', cursor: 'pointer' }}>
+                  <input type="checkbox" checked={!!form.send_invite} style={{ accentColor: '#00b4a0' }}
+                    onChange={e => setForm({ ...form, send_invite: e.target.checked })} />
+                  Send invitation email — user activates and sets their own password
+                </label>
+              )}
+              <label style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 8, fontSize: 13, color: '#475569', cursor: 'pointer' }}>
+                <input type="checkbox" checked={!!form.two_factor_enabled} style={{ accentColor: '#00b4a0' }}
+                  onChange={e => setForm({ ...form, two_factor_enabled: e.target.checked })} />
+                Require two-factor authentication (email OTP) at login
+              </label>
               <div style={{ ...s.fg, marginTop: 4 }}>
                 <label style={s.label}>Assign Roles <span style={{ color: '#ef4444' }}>*</span></label>
                 <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginTop: 6 }}>
@@ -820,7 +1037,7 @@ export default function SetupPage() {
                   if (!form.last_name?.trim())  errs.last_name  = 'Last name is required';
                   if (!form.email?.trim())      errs.email      = 'Email is required';
                   else if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(form.email)) errs.email = 'Enter a valid email';
-                  if (!editingUser && !form.password?.trim()) errs.password = 'Password is required';
+                  if (!editingUser && !form.send_invite && !form.password?.trim()) errs.password = 'Password is required';
                   const selRoles = Array.isArray(form.roles) ? form.roles : [form.role_id].filter(Boolean);
                   if (selRoles.length === 0) errs.roles = 'Select at least one role';
                   if (Object.keys(errs).length) { setFormError(errs); return; }
@@ -891,9 +1108,11 @@ export default function SetupPage() {
                         </div>
                       </td>
                       <td style={s.td}>
-                        <span style={{ background: u.is_active ? '#f0fdf4' : '#fef2f2', color: u.is_active ? '#065f46' : '#dc2626', padding: '2px 8px', borderRadius: 12, fontSize: '.75rem', fontWeight: 600 }}>
-                          {u.is_active ? 'Active' : 'Locked'}
-                        </span>
+                        {(() => {
+                          const st = u.account_status || (u.is_active ? 'active' : 'inactive');
+                          const [bg, col, label] = STATUS_STYLE[st] || STATUS_STYLE.active;
+                          return <span style={{ background: bg, color: col, padding: '2px 8px', borderRadius: 12, fontSize: '.75rem', fontWeight: 600 }}>{label}</span>;
+                        })()}
                       </td>
                       <td style={s.td}>
                         <button onClick={() => {
@@ -902,6 +1121,13 @@ export default function SetupPage() {
                           setShowForm(true);
                           setFormError({});
                         }} style={s.actBtn}>Edit</button>
+                        {u.invite_status !== 'active' && (
+                          <button onClick={() => inviteUser(u)} style={{ ...s.actBtn, marginLeft: 6, color: '#1d4ed8', borderColor: '#bfdbfe' }}>{u.invite_status === 'invited' ? 'Re-invite' : 'Invite'}</button>
+                        )}
+                        {!isAdmin && (u.account_status === 'suspended'
+                          ? <button onClick={() => setStatus(u, 'active')} style={{ ...s.actBtn, marginLeft: 6, color: '#065f46', borderColor: '#bbf7d0' }}>Unsuspend</button>
+                          : <button onClick={() => setStatus(u, 'suspended')} style={{ ...s.actBtn, marginLeft: 6, color: '#b91c1c', borderColor: '#fecaca' }}>Suspend</button>
+                        )}
                         {!isAdmin && (
                           <button onClick={() => deleteOneUser(u)} style={{ ...s.actBtn, marginLeft: 6, color: '#dc2626', borderColor: '#fecaca' }}>Delete</button>
                         )}
@@ -918,11 +1144,17 @@ export default function SetupPage() {
         </div>
       )}
 
+      {/* Permissions Tab */}
+      {tab === 3 && <PermissionsTab setMsg={setMsg} />}
+
       {/* Subscription Tab */}
-      {tab === 3 && <SubscriptionTab />}
+      {tab === 4 && <SubscriptionTab />}
 
       {/* Audit Logs Tab */}
-      {tab === 4 && <AuditLogView />}
+      {tab === 5 && <AuditLogView />}
+
+      {/* Queue & Voice Tab */}
+      {tab === 6 && <QueueVoiceTab setMsg={setMsg} />}
 
       {apptBlockUser && (
         <div style={{ position: 'fixed', inset: 0, background: 'rgba(15,23,42,.55)', display: 'grid', placeItems: 'center', zIndex: 50 }}>

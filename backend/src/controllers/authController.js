@@ -3,6 +3,21 @@ const jwt      = require('jsonwebtoken');
 const crypto   = require('crypto');
 const supabase = require('../utils/supabase');
 const { sendPasswordResetEmail, sendOtpEmail } = require('../utils/notify');
+const { auditLog } = require('../middlewares/audit');
+
+const MAX_FAILED_ATTEMPTS = 5;
+const LOCK_MS = 15 * 60 * 1000; // 15 minutes
+
+// Only fully-active accounts may sign in.
+const ensureLoginAllowed = (user) => {
+  const status = user.account_status;
+  if (status === 'suspended')           return { ok: false, message: 'Your account has been suspended. Contact your administrator.' };
+  if (status === 'inactive' || user.is_active === false) return { ok: false, message: 'Your account is inactive. Contact your administrator.' };
+  if (status === 'pending_invitation' || status === 'pending_activation' || user.invite_status === 'invited' || user.invite_status === 'pending') {
+    return { ok: false, message: 'Your account is not activated yet. Please use the activation link from your invitation email.' };
+  }
+  return { ok: true };
+};
 
 // Generate a 6-digit numeric OTP
 const genOtp = () => String(Math.floor(100000 + Math.random() * 900000));
@@ -39,6 +54,12 @@ const register = async (req, res) => {
 
     if (existing) {
       return res.status(409).json({ error: 'Email already registered' });
+    }
+
+    // Mobile must be unique among login accounts (patients excluded — role 3).
+    if (phone) {
+      const { data: dupPhone } = await supabase.from('users').select('id').eq('phone', phone).neq('role_id', 3).maybeSingle();
+      if (dupPhone) return res.status(409).json({ error: 'Mobile number already registered' });
     }
 
     // Hash password
@@ -103,7 +124,7 @@ const login = async (req, res) => {
     // Find user by email
     const { data: user, error } = await supabase
       .from('users')
-      .select('id, first_name, last_name, email, password_hash, role_id, roles, organization_id, email_verified')
+      .select('id, first_name, last_name, email, password_hash, role_id, roles, organization_id, email_verified, is_active, account_status, invite_status, failed_login_attempts, locked_until, two_factor_enabled')
       .eq('email', email)
       .single();
 
@@ -111,15 +132,48 @@ const login = async (req, res) => {
       return res.status(401).json({ error: 'Invalid email or password' });
     }
 
+    // Account lockout check
+    if (user.locked_until && new Date(user.locked_until) > new Date()) {
+      const mins = Math.ceil((new Date(user.locked_until) - new Date()) / 60000);
+      return res.status(423).json({ error: `Account locked due to failed login attempts. Try again in ${mins} minute(s).` });
+    }
+
     // Compare password
-    const valid = await bcrypt.compare(password, user.password_hash);
+    const valid = await bcrypt.compare(password, user.password_hash || '');
     if (!valid) {
-      return res.status(401).json({ error: 'Invalid email or password' });
+      const attempts = (user.failed_login_attempts || 0) + 1;
+      const lock = attempts >= MAX_FAILED_ATTEMPTS;
+      await supabase.from('users').update({
+        failed_login_attempts: lock ? 0 : attempts,
+        locked_until: lock ? new Date(Date.now() + LOCK_MS).toISOString() : null,
+      }).eq('id', user.id);
+      await auditLog({ user_id: user.id, role_id: user.role_id, organization_id: user.organization_id || null,
+        action: lock ? 'ACCOUNT_LOCKED' : 'FAILED_LOGIN', module: 'Auth', entity_type: 'user', entity_id: user.id,
+        description: `Failed login (${attempts}/${MAX_FAILED_ATTEMPTS})${lock ? ' — account locked 15m' : ''}` });
+      return res.status(401).json({ error: lock ? 'Too many failed attempts. Account locked for 15 minutes.' : 'Invalid email or password' });
     }
 
     // Block unverified accounts (legacy users have email_verified = null → allowed)
     if (user.email_verified === false) {
       return res.status(403).json({ error: 'Email not verified', requires_verification: true, email: user.email });
+    }
+
+    // Status gate — only active accounts may sign in.
+    const allowed = ensureLoginAllowed(user);
+    if (!allowed.ok) return res.status(403).json({ error: allowed.message });
+
+    // Reset failed-attempt counter on a valid password.
+    if (user.failed_login_attempts) {
+      await supabase.from('users').update({ failed_login_attempts: 0, locked_until: null }).eq('id', user.id);
+    }
+
+    // Optional two-factor: issue an email OTP and require verify-otp before token.
+    if (user.two_factor_enabled) {
+      const otp = genOtp();
+      const expiry = new Date(Date.now() + OTP_TTL_MS).toISOString();
+      await supabase.from('users').update({ otp_code: otp, otp_expiry: expiry, otp_purpose: 'login' }).eq('id', user.id);
+      await sendOtpEmail(user.email, user.first_name, otp, 'login');
+      return res.status(200).json({ requires_2fa: true, email: user.email, message: 'A verification code has been sent to your email.' });
     }
 
     const userRoles = Array.isArray(user.roles) && user.roles.length ? user.roles : [user.role_id];
@@ -146,6 +200,10 @@ const login = async (req, res) => {
       process.env.JWT_SECRET,
       { expiresIn: '7d' }
     );
+
+    await supabase.from('users').update({ last_login_at: new Date().toISOString() }).eq('id', user.id);
+    await auditLog({ user_id: user.id, role_id: user.role_id, organization_id: user.organization_id || null,
+      action: 'LOGIN', module: 'Auth', entity_type: 'user', entity_id: user.id, description: 'Successful login' });
 
     return res.status(200).json({
       message: 'Login successful',
@@ -216,7 +274,7 @@ const resetPassword = async (req, res) => {
 
     const { data: user } = await supabase
       .from('users')
-      .select('id, reset_token, reset_token_expiry')
+      .select('id, role_id, organization_id, reset_token, reset_token_expiry')
       .eq('reset_token', token)
       .single();
 
@@ -230,11 +288,51 @@ const resetPassword = async (req, res) => {
       password_hash,
       reset_token        : null,
       reset_token_expiry : null,
+      failed_login_attempts: 0,
+      locked_until       : null,
     }).eq('id', user.id);
+    await auditLog({ user_id: user.id, role_id: user.role_id || null, organization_id: user.organization_id || null,
+      action: 'PASSWORD_RESET', module: 'Auth', entity_type: 'user', entity_id: user.id, description: 'Password reset via email' });
 
     return res.json({ message: 'Password reset successful. You can now log in.' });
   } catch (err) {
     console.error('Reset password error:', err.message);
+    return res.status(500).json({ error: 'Internal server error' });
+  }
+};
+
+/* ─────────────────────────────────────────
+   RESET PASSWORD via EMAIL OTP
+   (forgot-password OTP flow: send-otp purpose 'reset' → this)
+───────────────────────────────────────── */
+const resetPasswordWithOtp = async (req, res) => {
+  try {
+    const { email, otp, new_password } = req.body;
+    if (!email || !otp || !new_password) return res.status(400).json({ error: 'email, otp and new_password are required' });
+    if (new_password.length < 6) return res.status(400).json({ error: 'Password must be at least 6 characters' });
+
+    const { data: user } = await supabase
+      .from('users')
+      .select('id, role_id, organization_id, otp_code, otp_expiry, otp_purpose')
+      .eq('email', email)
+      .single();
+
+    if (!user) return res.status(404).json({ error: 'No account found with this email' });
+    if (!user.otp_code || user.otp_code !== String(otp)) return res.status(400).json({ error: 'Invalid OTP' });
+    if (!user.otp_expiry || new Date(user.otp_expiry) < new Date()) return res.status(400).json({ error: 'OTP has expired. Request a new one.' });
+    if (user.otp_purpose && user.otp_purpose !== 'reset') return res.status(400).json({ error: 'OTP purpose mismatch' });
+
+    const password_hash = await bcrypt.hash(new_password, 10);
+    await supabase.from('users').update({
+      password_hash, otp_code: null, otp_expiry: null, otp_purpose: null,
+      failed_login_attempts: 0, locked_until: null,
+    }).eq('id', user.id);
+    await auditLog({ user_id: user.id, role_id: user.role_id || null, organization_id: user.organization_id || null,
+      action: 'PASSWORD_RESET', module: 'Auth', entity_type: 'user', entity_id: user.id, description: 'Password reset via email OTP' });
+
+    return res.json({ message: 'Password reset successful. You can now log in.' });
+  } catch (err) {
+    console.error('Reset password OTP error:', err.message);
     return res.status(500).json({ error: 'Internal server error' });
   }
 };
@@ -254,6 +352,8 @@ const changePassword = async (req, res) => {
 
     const password_hash = await bcrypt.hash(new_password, 10);
     await supabase.from('users').update({ password_hash, updated_at: new Date().toISOString() }).eq('id', user.id);
+    await auditLog({ user_id: user.id, role_id: req.user.role_id, organization_id: req.user.organization_id || null,
+      action: 'PASSWORD_CHANGED', module: 'Auth', entity_type: 'user', entity_id: user.id, description: 'User changed own password' });
 
     return res.json({ message: 'Password changed successfully' });
   } catch (err) {
@@ -282,6 +382,8 @@ const adminRegister = async (req, res) => {
 
     const { data: existing } = await supabase.from('users').select('id').eq('email', email).maybeSingle();
     if (existing) return res.status(409).json({ error: 'Email already registered' });
+    const { data: dupPhone } = await supabase.from('users').select('id').eq('phone', phone).neq('role_id', 3).maybeSingle();
+    if (dupPhone) return res.status(409).json({ error: 'Mobile number already registered' });
 
     // Build slug from org name
     const slug = org_name.trim().toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '')
@@ -391,7 +493,7 @@ const verifyOtp = async (req, res) => {
 
     const { data: user } = await supabase
       .from('users')
-      .select('id, first_name, last_name, email, role_id, roles, organization_id, otp_code, otp_expiry, otp_purpose')
+      .select('id, first_name, last_name, email, role_id, roles, organization_id, otp_code, otp_expiry, otp_purpose, is_active, account_status, invite_status')
       .eq('email', email)
       .single();
 
@@ -406,11 +508,20 @@ const verifyOtp = async (req, res) => {
       return res.status(400).json({ error: 'OTP purpose mismatch' });
     }
 
+    // For a 2FA login challenge the account must still be active.
+    if (purpose === 'login') {
+      const allowed = ensureLoginAllowed(user);
+      if (!allowed.ok) return res.status(403).json({ error: allowed.message });
+    }
+
     // Mark verified + clear OTP
     await supabase
       .from('users')
-      .update({ email_verified: true, otp_code: null, otp_expiry: null, otp_purpose: null })
+      .update({ email_verified: true, otp_code: null, otp_expiry: null, otp_purpose: null, last_login_at: new Date().toISOString(), failed_login_attempts: 0, locked_until: null })
       .eq('id', user.id);
+    await auditLog({ user_id: user.id, role_id: user.role_id, organization_id: user.organization_id || null,
+      action: purpose === 'login' ? 'LOGIN_2FA' : 'EMAIL_VERIFIED', module: 'Auth', entity_type: 'user', entity_id: user.id,
+      description: purpose === 'login' ? 'Successful 2FA login' : 'Email verified' });
 
     // For verification/login → issue token so user is logged in
     const userRoles = Array.isArray(user.roles) && user.roles.length ? user.roles : [user.role_id];
@@ -435,4 +546,112 @@ const verifyOtp = async (req, res) => {
   }
 };
 
-module.exports = { register, login, forgotPassword, resetPassword, changePassword, adminRegister, sendOtp, verifyOtp };
+/* ─────────────────────────────────────────
+   LOGOUT (authenticated) — records logout history
+───────────────────────────────────────── */
+const logout = async (req, res) => {
+  try {
+    await auditLog({ user_id: req.user.id, role_id: req.user.role_id, organization_id: req.user.organization_id || null,
+      action: 'LOGOUT', module: 'Auth', entity_type: 'user', entity_id: req.user.id, description: 'User logged out' });
+    return res.json({ message: 'Logged out' });
+  } catch (err) {
+    return res.status(500).json({ error: 'Internal server error' });
+  }
+};
+
+/* ─────────────────────────────────────────
+   INVITE: validate activation token
+───────────────────────────────────────── */
+const getInvite = async (req, res) => {
+  try {
+    const { token } = req.params;
+    if (!token) return res.status(400).json({ error: 'No invitation token provided' });
+
+    const { data: user } = await supabase
+      .from('users')
+      .select('id, first_name, last_name, email, invite_status, invite_token_expiry')
+      .eq('invite_token', token)
+      .single();
+
+    if (!user) return res.status(400).json({ error: 'Invalid or expired invitation link' });
+    if (user.invite_status === 'active') return res.status(409).json({ error: 'This account is already activated. Please sign in.' });
+    if (!user.invite_token_expiry || new Date(user.invite_token_expiry) < new Date()) {
+      return res.status(400).json({ error: 'This invitation link has expired. Ask your administrator to re-invite you.' });
+    }
+
+    return res.json({ email: user.email, first_name: user.first_name, last_name: user.last_name });
+  } catch (err) {
+    console.error('Get invite error:', err.message);
+    return res.status(500).json({ error: 'Internal server error' });
+  }
+};
+
+/* ─────────────────────────────────────────
+   INVITE: activate account + set password
+───────────────────────────────────────── */
+const activateInvite = async (req, res) => {
+  try {
+    const { token, otp, new_password } = req.body;
+    if (!token || !new_password) return res.status(400).json({ error: 'token and new_password are required' });
+    if (new_password.length < 6)  return res.status(400).json({ error: 'Password must be at least 6 characters' });
+
+    const { data: user } = await supabase
+      .from('users')
+      .select('id, first_name, last_name, email, role_id, roles, organization_id, invite_status, invite_token_expiry, otp_code, otp_expiry')
+      .eq('invite_token', token)
+      .single();
+
+    if (!user) return res.status(400).json({ error: 'Invalid or expired invitation link' });
+
+    // Email OTP verification at activation (OTP is emailed via /auth/send-otp).
+    if (otp !== undefined) {
+      if (!user.otp_code || user.otp_code !== String(otp)) return res.status(400).json({ error: 'Invalid verification code' });
+      if (!user.otp_expiry || new Date(user.otp_expiry) < new Date()) return res.status(400).json({ error: 'Verification code expired. Request a new one.' });
+    }
+    if (user.invite_status === 'active') return res.status(409).json({ error: 'This account is already activated. Please sign in.' });
+    if (!user.invite_token_expiry || new Date(user.invite_token_expiry) < new Date()) {
+      return res.status(400).json({ error: 'This invitation link has expired. Ask your administrator to re-invite you.' });
+    }
+
+    const password_hash = await bcrypt.hash(new_password, 10);
+    await supabase.from('users').update({
+      password_hash,
+      email_verified      : true,
+      is_active           : true,
+      account_status      : 'active',
+      invite_status       : 'active',
+      invite_token        : null,
+      invite_token_expiry : null,
+      otp_code            : null,
+      otp_expiry          : null,
+      otp_purpose         : null,
+    }).eq('id', user.id);
+    // Keep the linked employee record in sync.
+    await supabase.from('staff_profiles').update({ is_active: true, employment_status: 'Active' }).eq('user_id', user.id);
+    await auditLog({ user_id: user.id, role_id: user.role_id, organization_id: user.organization_id || null,
+      action: 'ACCOUNT_ACTIVATED', module: 'Auth', entity_type: 'user', entity_id: user.id, description: 'Account activated via invitation' });
+
+    // Auto-login on activation so the user lands straight in their portal.
+    const userRoles = Array.isArray(user.roles) && user.roles.length ? user.roles : [user.role_id];
+    const token2 = jwt.sign(
+      { id: user.id, email: user.email, role_id: user.role_id, roles: userRoles, organization_id: user.organization_id || null },
+      process.env.JWT_SECRET,
+      { expiresIn: '7d' }
+    );
+
+    return res.json({
+      message: 'Account activated successfully',
+      token: token2,
+      user: {
+        id: user.id, first_name: user.first_name, last_name: user.last_name,
+        email: user.email, role_id: user.role_id, roles: userRoles,
+        organization_id: user.organization_id || null,
+      },
+    });
+  } catch (err) {
+    console.error('Activate invite error:', err.message);
+    return res.status(500).json({ error: 'Internal server error' });
+  }
+};
+
+module.exports = { register, login, logout, forgotPassword, resetPassword, resetPasswordWithOtp, changePassword, adminRegister, sendOtp, verifyOtp, getInvite, activateInvite };

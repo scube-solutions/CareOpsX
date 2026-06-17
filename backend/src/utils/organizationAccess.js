@@ -21,6 +21,9 @@ const DEFAULT_SEAT_LIMITS = {
   lab: 1,
   pharmacist: 1,
   reporting: 1,
+  nurse: -1,
+  hr_manager: 2,
+  billing_executive: 2,
 };
 
 const ROLE_TO_SEAT_KEY = {
@@ -31,8 +34,13 @@ const ROLE_TO_SEAT_KEY = {
   6: 'lab',
   7: 'pharmacist',
   8: 'reporting',
+  10: 'nurse',
+  11: 'hr_manager',
+  12: 'billing_executive',
 };
 
+// Nurse (10) and HR Manager (11) intentionally have NO portal key — they are not
+// gated by org portal toggles. ensurePortalEnabled returns ok when no key maps.
 const ROLE_TO_PORTAL_KEY = {
   1: 'admin',
   2: 'doctor',
@@ -41,6 +49,21 @@ const ROLE_TO_PORTAL_KEY = {
   6: 'lab',
   7: 'pharmacy',
   8: 'analytics',
+};
+
+// Human-readable labels — shared source of truth for role names.
+const ROLE_LABELS = {
+  1: 'Admin',
+  2: 'Doctor',
+  3: 'Patient',
+  5: 'Receptionist',
+  6: 'Lab Staff',
+  7: 'Pharmacist',
+  8: 'Reporting',
+  9: 'Super Admin',
+  10: 'Nurse',
+  11: 'HR Manager',
+  12: 'Billing Executive',
 };
 
 const normalizePortalAccess = (value) => ({ ...DEFAULT_PORTAL_ACCESS, ...(value || {}) });
@@ -140,6 +163,7 @@ module.exports = {
   DEFAULT_SEAT_LIMITS,
   ROLE_TO_SEAT_KEY,
   ROLE_TO_PORTAL_KEY,
+  ROLE_LABELS,
   normalizePortalAccess,
   normalizeSeatLimits,
   getUserOrganizationId,

@@ -3,6 +3,7 @@
 import { useEffect, useState } from 'react';
 import { api } from '@/lib/api';
 import { T } from '../layout';
+import AISummaryCard from '@/lib/AISummaryCard';
 
 function greeting() {
   const h = new Date().getHours();
@@ -168,6 +169,9 @@ export default function AdminDashboardPage() {
           </div>
         ))}
       </div>
+
+      {/* AI executive overview */}
+      <AISummaryCard />
 
       {/* Middle row */}
       <div className="responsive-grid-2" style={{ gap: 16, marginBottom: 24 }}>

@@ -10,6 +10,7 @@ router.get('/staff',           ...hrAccess, ctrl.getStaff);
 router.post('/staff',          ...adminOnly, ctrl.createStaff);
 router.put('/staff/:id',       ...adminOnly, ctrl.updateStaff);
 router.patch('/staff/:id/toggle', ...adminOnly, ctrl.toggleStaff);
+router.post('/staff/:id/invite',  ...adminOnly, ctrl.inviteStaff);
 
 // Attendance
 router.get('/attendance',      ...hrAccess, ctrl.getAttendance);

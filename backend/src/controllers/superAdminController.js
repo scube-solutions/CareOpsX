@@ -32,12 +32,24 @@ const getOrganizations = async (req, res) => {
     const { data: organizations, error } = await adminDb.from('organizations').select('*').order('created_at', { ascending: false });
     if (error) throw error;
 
+    const TRIAL_DAYS = 7;
+    const dayMid = (d) => { const x = new Date(d); return new Date(x.getFullYear(), x.getMonth(), x.getDate()).getTime(); };
+    const todayMid = dayMid(new Date());
+
     const enriched = await Promise.all((organizations || []).map(async (org) => {
       const { count: activeUsers } = await supabase
         .from('users')
         .select('*', { count: 'exact', head: true })
         .eq('organization_id', org.id)
         .eq('is_active', true);
+
+      // Trial countdown (only meaningful while billing_status === 'trial')
+      let trialDaysLeft = null, trialExpired = false;
+      if (org.created_at && (org.billing_status === 'trial' || !org.billing_status)) {
+        const elapsed = Math.floor((todayMid - dayMid(org.created_at)) / 86400000);
+        trialDaysLeft = TRIAL_DAYS - elapsed;
+        trialExpired = trialDaysLeft <= 0;
+      }
 
       return {
         ...org,
@@ -46,8 +58,12 @@ const getOrganizations = async (req, res) => {
         active_users: activeUsers || 0,
         doctor_seats_used: await countUsersInSeat(org.id, 'doctor'),
         admin_seats_used: await countUsersInSeat(org.id, 'admin'),
+        trial_days_left: trialDaysLeft,
+        trial_expired: trialExpired,
       };
     }));
+
+    const onTrial = enriched.filter((o) => o.trial_days_left !== null);
 
     return res.json({
       summary: {
@@ -55,6 +71,9 @@ const getOrganizations = async (req, res) => {
         active: enriched.filter((org) => org.status === 'active').length,
         paused: enriched.filter((org) => org.status === 'paused').length,
         suspended: enriched.filter((org) => org.status === 'suspended').length,
+        trial_expiring_soon: onTrial.filter((o) => o.trial_days_left > 0 && o.trial_days_left <= 2).length,
+        trial_expired: onTrial.filter((o) => o.trial_expired).length,
+        on_trial: onTrial.length,
       },
       organizations: enriched,
     });
