@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react';
 import { api } from '@/lib/api';
 import { T } from '../layout';
 import AISummaryCard from '@/lib/AISummaryCard';
+import PlanFeaturesCard from '@/lib/PlanFeaturesCard';
 
 function greeting() {
   const h = new Date().getHours();
@@ -169,6 +170,9 @@ export default function AdminDashboardPage() {
           </div>
         ))}
       </div>
+
+      {/* Plan upgrade prompt (locked features) */}
+      <PlanFeaturesCard />
 
       {/* AI executive overview */}
       <AISummaryCard />

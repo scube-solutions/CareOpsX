@@ -24,6 +24,20 @@ export default function CxAdminLayout({ children }) {
   const [pwd, setPwd]           = useState({ current:'', next:'', confirm:'' });
   const [pwdMsg, setPwdMsg]     = useState('');
   const [pwdSaving, setPwdSaving] = useState(false);
+  const [mobileOpen, setMobileOpen] = useState(false);
+  const [isMobile, setIsMobile]     = useState(false);
+
+  // Track viewport so layout is deterministic (no CSS-media-vs-inline conflicts).
+  useEffect(() => {
+    const onResize = () => {
+      const m = window.innerWidth <= 1024;
+      setIsMobile(m);
+      if (!m) setMobileOpen(false);
+    };
+    onResize();
+    window.addEventListener('resize', onResize);
+    return () => window.removeEventListener('resize', onResize);
+  }, []);
 
   /* ── Auth check ────────────────────────────────────────────── */
   useEffect(() => {
@@ -69,11 +83,35 @@ export default function CxAdminLayout({ children }) {
     ? new URLSearchParams(window.location.search).get('org')
     : null;
 
+  const asideStyle = isMobile
+    ? { ...S.aside, position:'fixed', top:0, left:0, height:'100vh', zIndex:80, transform: mobileOpen ? 'translateX(0)' : 'translateX(-100%)', transition:'transform .22s ease' }
+    // Desktop: truly fixed so the menu never scrolls with the page.
+    : { ...S.aside, position:'fixed', top:0, left:0, height:'100vh', zIndex:40 };
+
   return (
     <div style={{ display:'flex', minHeight:'100vh', background:'#f5f8fc' }}>
 
+      {/* ══════ MOBILE TOP BAR (hamburger) ══════ */}
+      {isMobile && (
+        <div style={{ position:'fixed', top:0, left:0, right:0, zIndex:50, display:'flex', alignItems:'center', gap:12, padding:'12px 16px', background:'#0f1f3d', borderBottom:'1px solid rgba(255,255,255,.08)' }}>
+          <button onClick={() => setMobileOpen(true)} aria-label="Open menu"
+            style={{ background:'rgba(255,255,255,.08)', border:'1px solid rgba(255,255,255,.18)', color:'#fff', width:36, height:36, borderRadius:9, cursor:'pointer', fontSize:18, display:'flex', alignItems:'center', justifyContent:'center' }}>☰</button>
+          <div style={{ fontWeight:800, fontSize:14, color:'#fff' }}>Care<span style={{ color:'#00b4a0' }}>OpsX</span> <span style={{ fontSize:10, color:'rgba(255,255,255,.4)', fontWeight:500 }}>Control</span></div>
+        </div>
+      )}
+
+      {/* ══════ OVERLAY (mobile) ══════ */}
+      {isMobile && mobileOpen && (
+        <div onClick={() => setMobileOpen(false)} style={{ position:'fixed', inset:0, zIndex:70, background:'rgba(15,31,61,.45)' }} />
+      )}
+
       {/* ══════ SIDEBAR ══════ */}
-      <aside style={S.aside}>
+      <aside style={asideStyle}>
+        {/* Mobile close button */}
+        {isMobile && (
+          <button onClick={() => setMobileOpen(false)} aria-label="Close menu"
+            style={{ position:'absolute', top:14, right:12, zIndex:2, width:30, height:30, borderRadius:8, border:'1px solid rgba(255,255,255,.18)', background:'rgba(255,255,255,.08)', color:'#fff', cursor:'pointer', fontSize:18, display:'flex', alignItems:'center', justifyContent:'center' }}>×</button>
+        )}
 
         {/* Logo */}
         <div style={S.logoRow}>
@@ -90,7 +128,7 @@ export default function CxAdminLayout({ children }) {
         </div>
 
         {/* Nav */}
-        <nav style={{ flex:1, padding:'10px 8px', overflowY:'auto' }}>
+        <nav className="sidebar-scroll" style={{ flex:1, padding:'10px 8px', overflowY:'auto' }}>
 
           {/* Organizations accordion */}
           <button onClick={() => setOrgsOpen(o => !o)} style={S.accordionBtn}>
@@ -132,6 +170,16 @@ export default function CxAdminLayout({ children }) {
               </a>
             </div>
           )}
+
+          {/* Plans + Requests */}
+          <a href="/cxadmin/plans" style={{ ...S.accordionBtn, textDecoration:'none', justifyContent:'flex-start', gap:8, marginTop:6,
+            color: pathname==='/cxadmin/plans' ? '#00b4a0' : 'rgba(255,255,255,.75)' }}>
+            <IcKey /> <span style={{ fontSize:13, fontWeight:600 }}>Subscription Plans</span>
+          </a>
+          <a href="/cxadmin/requests" style={{ ...S.accordionBtn, textDecoration:'none', justifyContent:'flex-start', gap:8, marginTop:4,
+            color: pathname==='/cxadmin/requests' ? '#00b4a0' : 'rgba(255,255,255,.75)' }}>
+            <IcOrg /> <span style={{ fontSize:13, fontWeight:600 }}>Feature Requests</span>
+          </a>
         </nav>
 
         {/* Bottom section */}
@@ -160,7 +208,8 @@ export default function CxAdminLayout({ children }) {
       </aside>
 
       {/* ══════ MAIN CONTENT ══════ */}
-      <main style={{ flex:1, overflowY:'auto' }}>
+      {/* Sidebar is position:fixed, so offset main by its width on desktop. */}
+      <main style={{ flex:1, minWidth:0, marginLeft: isMobile ? 0 : 228, paddingTop: isMobile ? 60 : 0 }}>
         {children}
       </main>
 

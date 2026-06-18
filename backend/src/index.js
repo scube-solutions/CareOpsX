@@ -2,7 +2,7 @@ const express = require('express');
 const cors    = require('cors');
 require('dotenv').config();
 const { verifyToken } = require('./middlewares/auth');
-const { getOrganizationContext, ensureOrganizationOperational } = require('./utils/organizationAccess');
+const { getOrganizationContext, ensureOrganizationOperational, ensureFeatureEnabled } = require('./utils/organizationAccess');
 
 const app = express();
 app.use(cors({
@@ -46,6 +46,24 @@ const requirePortal = (portalKey) => async (req, res, next) => {
   });
 };
 
+// Plan feature gate — blocks routes for capabilities not in the org's plan
+// (ai_assistant | hrms | queue_voice). Super admin always passes.
+const requireFeature = (feature) => async (req, res, next) => {
+  verifyToken(req, res, async () => {
+    try {
+      const { isSuperAdmin, organization, featureFlags } = await getOrganizationContext(req);
+      if (isSuperAdmin && !organization) return next();
+      const orgCheck = ensureOrganizationOperational(organization);
+      if (!orgCheck.ok) return res.status(403).json({ error: orgCheck.message });
+      const feat = ensureFeatureEnabled(featureFlags, feature);
+      if (!feat.ok) return res.status(403).json({ error: feat.message });
+      next();
+    } catch (err) {
+      return res.status(500).json({ error: err.message });
+    }
+  });
+};
+
 // ── Core Routes ───────────────────────────────────────────────────────────────
 app.use('/auth',          require('./routes/auth'));
 app.use('/appointments',  requirePortal('doctor'),    require('./routes/appointments'));
@@ -66,8 +84,8 @@ app.use('/audit',         require('./routes/audit'));
 app.use('/dropoff',       require('./routes/dropoff'));
 app.use('/payment-requests', require('./routes/paymentRequests'));
 app.use('/super-admin',   require('./routes/superAdmin'));
-app.use('/hr',            requirePortal('admin'),     require('./routes/hr'));
-app.use('/ai',            require('./routes/ai'));
+app.use('/hr',            requireFeature('hrms'),     require('./routes/hr'));
+app.use('/ai',            requireFeature('ai_assistant'), require('./routes/ai'));
 
 // ── Health Check ──────────────────────────────────────────────────────────────
 app.get('/health', (req, res) => res.json({ status: 'ok', app: 'CareOpsX API v2' }));

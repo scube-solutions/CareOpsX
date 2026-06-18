@@ -1,5 +1,14 @@
 const { auditLog } = require('../middlewares/audit');
-const { getUserOrganizationId } = require('../utils/organizationAccess');
+const { getUserOrganizationId, getOrganizationById, normalizeFeatureFlags } = require('../utils/organizationAccess');
+
+// True when the org's plan includes voice announcements.
+const queueVoiceEnabled = async (organizationId) => {
+  if (!organizationId) return true;
+  try {
+    const org = await getOrganizationById(organizationId);
+    return normalizeFeatureFlags(org?.feature_flags).queue_voice !== false;
+  } catch { return true; }
+};
 
 // Attach patient + doctor names to queue token rows
 const attachQueueRelated = async (rows, db) => {
@@ -139,6 +148,8 @@ const getLobbyDisplay = async (req, res) => {
       const { data: s } = await supabase.from('queue_settings').select('*').eq('organization_id', settingsOrg).maybeSingle();
       if (s) settings = { ...settings, ...s };
     }
+    // Plan gate: if voice isn't in the org's plan, force it off for the display.
+    if (!(await queueVoiceEnabled(settingsOrg))) settings.voice_enabled = false;
 
     return res.json({ called, waiting, total_waiting: waiting.length, settings });
   } catch (err) {
@@ -254,6 +265,7 @@ const updateQueueSettings = async (req, res) => {
     const supabase = req.db;
     const organizationId = getUserOrganizationId(req);
     if (!organizationId) return res.status(400).json({ error: 'Organization context required' });
+    if (!(await queueVoiceEnabled(organizationId))) return res.status(403).json({ error: 'Voice announcements are not included in your organization\'s plan.' });
     const allowed = ['voice_enabled', 'voice_name', 'voice_lang', 'voice_gender', 'volume', 'rate', 'pitch', 'repeat_count', 'repeat_interval_sec', 'announce_template'];
     const payload = { organization_id: organizationId, updated_by: req.user.id, updated_at: new Date().toISOString() };
     allowed.forEach(k => { if (req.body[k] !== undefined) payload[k] = req.body[k]; });

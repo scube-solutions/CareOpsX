@@ -54,6 +54,85 @@ canvas {
   max-width: 100%;
 }
 
+/* Thin, subtle scrollbar for dark sidebars (replaces the chunky OS default). */
+.sidebar-scroll {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(255, 255, 255, 0.18) transparent;
+}
+.sidebar-scroll::-webkit-scrollbar {
+  width: 6px;
+}
+.sidebar-scroll::-webkit-scrollbar-track {
+  background: transparent;
+}
+.sidebar-scroll::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.18);
+  border-radius: 3px;
+}
+.sidebar-scroll::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.32);
+}
+
+/* ── CxAdmin (super admin) sidebar — fixed + responsive drawer ── */
+.cx-root {
+  display: flex;
+  min-height: 100vh;
+  background: #f5f8fc;
+}
+@media (max-width: 1024px) {
+  .cx-root { display: block; }
+}
+.cx-aside {
+  width: 228px;
+  background: #0f1f3d;
+  display: flex;
+  flex-direction: column;
+  flex-shrink: 0;
+  position: sticky;
+  top: 0;
+  height: 100vh;
+  z-index: 70;
+}
+.cx-mobilebar { display: none; }
+.cx-overlay { display: none; }
+.cx-close { display: none; }
+
+@media (max-width: 1024px) {
+  .cx-mobilebar {
+    position: sticky;
+    top: 0;
+    z-index: 50;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 12px 16px;
+    background: #0f1f3d;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+  }
+  .cx-aside {
+    position: fixed;
+    top: 0;
+    bottom: 0;
+    left: 0;
+    height: 100vh;
+    transform: translateX(-100%);
+    transition: transform 0.22s ease;
+  }
+  .cx-aside.is-open {
+    transform: translateX(0);
+  }
+  .cx-close {
+    display: flex;
+  }
+  .cx-overlay {
+    position: fixed;
+    inset: 0;
+    z-index: 60;
+    background: rgba(15, 31, 61, 0.45);
+    display: block;
+  }
+}
+
 .app-shell {
   display: flex;
   height: 100vh;

@@ -22,12 +22,16 @@ const STATUS_STYLE = {
   inactive:  { bg:'#f1f5f9', color:'#475569' },
 };
 
+const FEATURES = [['ai_assistant','AI Assistant'],['hrms','HRMS'],['queue_voice','Queue Voice']];
+
 const emptyCreate = {
   organization_name:'', contact_name:'', contact_email:'', contact_phone:'',
-  address:'', domain:'', billing_status:'trial', payment_status:'pending', notes:'',
+  address:'', domain:'', plan:'trial', billing_status:'trial', payment_status:'pending', notes:'',
   portal_access:{ admin:true,doctor:true,patient:true,reception:true,lab:true,pharmacy:true,analytics:true },
   seat_limits:  { admin:2,doctor:3,receptionist:2,lab:1,pharmacist:1,reporting:1,patient:-1 },
+  feature_flags:{ ai_assistant:true, hrms:true, queue_voice:true },
   admin_user:{ first_name:'',last_name:'',email:'',password:'' },
+  send_invite:true,
 };
 
 export default function OrganizationsPage() {
@@ -48,6 +52,22 @@ export default function OrganizationsPage() {
   const [orgCode,setOrgCode]       = useState('');
   const [resetModal,setResetModal] = useState(null);
   const [newPwd,setNewPwd]         = useState('');
+  const [plans,setPlans]           = useState([]);
+
+  // Load subscription plans once (for the plan selector + applying defaults).
+  useEffect(() => { api('/super-admin/plans').then(d=>setPlans(d.plans||[])).catch(()=>{}); }, []);
+
+  // Apply a plan's access bundle into the create form.
+  const applyPlanToForm = (planKey) => {
+    const p = plans.find(x=>x.key===planKey);
+    setForm(f => ({ ...f, plan:planKey,
+      ...(p ? { portal_access:{...p.portal_access}, seat_limits:{...p.seat_limits}, feature_flags:{...p.feature_flags} } : {}) }));
+  };
+  const applyPlanToSelected = (planKey) => {
+    const p = plans.find(x=>x.key===planKey);
+    setSelected(s => ({ ...s, plan:planKey,
+      ...(p ? { portal_access:{...p.portal_access}, seat_limits:{...p.seat_limits}, feature_flags:{...p.feature_flags} } : {}) }));
+  };
 
   const flash = (text,type='info') => { setMsg({text,type}); setTimeout(()=>setMsg({text:'',type:'info'}),4000); };
 
@@ -111,6 +131,7 @@ export default function OrganizationsPage() {
         contact_email:selected.contact_email, contact_phone:selected.contact_phone,
         billing_status:selected.billing_status, payment_status:selected.payment_status,
         notes:selected.notes, seat_limits:selected.seat_limits, portal_access:selected.portal_access,
+        plan:selected.plan, feature_flags:selected.feature_flags,
       })});
       flash('Saved ✓','success');
       await loadAll(); await loadDetail(selected.id);
@@ -169,27 +190,30 @@ export default function OrganizationsPage() {
   const toggleSelPortal=(key,val)=>setSelected(p=>({...p,portal_access:{...p.portal_access,[key]:val}}));
   const setSelSeat=(k,v)=>setSelected(p=>({...p,seat_limits:{...p.seat_limits,[k]:Number(v)}}));
 
-  const PortalRows = ({access,seats,onToggle,onSeat})=> ALL_PORTALS.map(p=>{
+  const PortalRows = ({access,seats,onToggle,onSeat,locked})=> ALL_PORTALS.map(p=>{
     const enabled=!!access?.[p.key];
     return(
-      <div key={p.key} style={{marginBottom:10,borderRadius:10,border:`1.5px solid ${enabled?'#00b4a0':'#e2e8f0'}`,background:enabled?'#f0fdfa':'#f8fafc'}}>
-        <label style={{display:'flex',alignItems:'center',gap:10,padding:'10px 14px',cursor:'pointer'}}>
-          <input type="checkbox" checked={enabled} onChange={e=>onToggle(p.key,e.target.checked)}/>
+      <div key={p.key} style={{marginBottom:10,borderRadius:10,border:`1.5px solid ${enabled?'#00b4a0':'#e2e8f0'}`,background:enabled?'#f0fdfa':'#f8fafc',opacity:locked?.7:1}}>
+        <label style={{display:'flex',alignItems:'center',gap:10,padding:'10px 14px',cursor:locked?'not-allowed':'pointer'}}>
+          <input type="checkbox" checked={enabled} disabled={locked} onChange={e=>onToggle(p.key,e.target.checked)}/>
           <span style={{fontWeight:700,fontSize:13,color:enabled?'#0f766e':'#64748b'}}>{p.label}</span>
         </label>
         {enabled&&(
           <div style={{padding:'0 14px 12px',display:'flex',alignItems:'center',gap:10}}>
             <label style={{fontSize:12,color:'#64748b',flex:1}}>{p.seatLabel}</label>
             <div style={{display:'flex',alignItems:'center',gap:6}}>
-              <button onClick={()=>onSeat(p.seatKey,Math.max(-1,(seats?.[p.seatKey]||0)-1))} style={S.stepBtn}>−</button>
-              <input type="number" value={seats?.[p.seatKey]??1} onChange={e=>onSeat(p.seatKey,e.target.value)} style={{...S.input,width:60,textAlign:'center',padding:'6px 4px'}}/>
-              <button onClick={()=>onSeat(p.seatKey,(seats?.[p.seatKey]||0)+1)} style={S.stepBtn}>＋</button>
+              <button disabled={locked} onClick={()=>onSeat(p.seatKey,Math.max(-1,(seats?.[p.seatKey]||0)-1))} style={{...S.stepBtn,opacity:locked?.5:1,cursor:locked?'not-allowed':'pointer'}}>−</button>
+              <input type="number" value={seats?.[p.seatKey]??1} disabled={locked} onChange={e=>onSeat(p.seatKey,e.target.value)} style={{...S.input,width:60,textAlign:'center',padding:'6px 4px'}}/>
+              <button disabled={locked} onClick={()=>onSeat(p.seatKey,(seats?.[p.seatKey]||0)+1)} style={{...S.stepBtn,opacity:locked?.5:1,cursor:locked?'not-allowed':'pointer'}}>＋</button>
             </div>
           </div>
         )}
       </div>
     );
   });
+
+  // Only the Enterprise (custom) plan unlocks manual portal/seat/feature editing.
+  const planIsCustom = (plan)=> String(plan||'').toLowerCase()==='custom';
 
   return(
     <div style={{minHeight:'100%'}}>
@@ -285,6 +309,12 @@ export default function OrganizationsPage() {
                 </div>
                 <div style={S.fg}><label style={S.label}>Address</label>
                   <textarea style={{...S.input,minHeight:60}} value={form.address} onChange={e=>setForm(p=>({...p,address:e.target.value}))} placeholder="Street, City, State, PIN"/></div>
+                <div style={S.fg}><label style={S.label}>Subscription Plan</label>
+                  <select style={S.input} value={form.plan} onChange={e=>applyPlanToForm(e.target.value)}>
+                    {plans.map(p=><option key={p.key} value={p.key}>{p.label}</option>)}
+                  </select>
+                  <p style={{fontSize:11,color:'#64748b',marginTop:4}}>Selecting a plan sets portals, seats &amp; features below. You can still fine-tune.</p>
+                </div>
                 <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:12}}>
                   <div style={S.fg}><label style={S.label}>Billing Status</label>
                     <select style={S.input} value={form.billing_status} onChange={e=>setForm(p=>({...p,billing_status:e.target.value}))}>
@@ -299,8 +329,18 @@ export default function OrganizationsPage() {
               <div style={{display:'flex',flexDirection:'column',gap:16}}>
                 <div style={S.card}>
                   <h2 style={S.h2}>Portals & Seats</h2>
-                  <p style={{fontSize:12,color:'#64748b',marginBottom:14}}>Enable portals first, then set seat count for each.</p>
-                  <PortalRows access={form.portal_access} seats={form.seat_limits} onToggle={toggleFormPortal} onSeat={setFormSeat}/>
+                  <p style={{fontSize:12,color:'#64748b',marginBottom:14}}>{planIsCustom(form.plan)?'Enterprise plan — set portals & seats manually.':'Set automatically by the selected plan. Choose Enterprise (Custom) to edit.'}</p>
+                  <PortalRows access={form.portal_access} seats={form.seat_limits} onToggle={toggleFormPortal} onSeat={setFormSeat} locked={!planIsCustom(form.plan)}/>
+                </div>
+                <div style={S.card}>
+                  <h2 style={S.h2}>Features</h2>
+                  <div style={{display:'flex',flexWrap:'wrap',gap:12,marginTop:8}}>
+                    {FEATURES.map(([k,l])=>{const locked=!planIsCustom(form.plan);return(
+                      <label key={k} style={{display:'flex',alignItems:'center',gap:6,fontSize:13,cursor:locked?'not-allowed':'pointer',opacity:locked?.6:1}}>
+                        <input type="checkbox" disabled={locked} checked={!!form.feature_flags?.[k]} onChange={e=>setForm(p=>({...p,feature_flags:{...p.feature_flags,[k]:e.target.checked}}))}/>{l}
+                      </label>
+                    );})}
+                  </div>
                 </div>
                 <div style={S.card}>
                   <h2 style={S.h2}>Initial Admin Account</h2>
@@ -313,8 +353,14 @@ export default function OrganizationsPage() {
                   </div>
                   <div style={S.fg}><label style={S.label}>Email (used to login)</label>
                     <input style={S.input} type="email" value={form.admin_user.email} onChange={e=>setForm(p=>({...p,admin_user:{...p.admin_user,email:e.target.value}}))}/></div>
-                  <div style={S.fg}><label style={S.label}>Password</label>
-                    <input style={S.input} type="password" value={form.admin_user.password} onChange={e=>setForm(p=>({...p,admin_user:{...p.admin_user,password:e.target.value}}))}/></div>
+                  <label style={{display:'flex',alignItems:'center',gap:8,fontSize:13,color:'#0f766e',cursor:'pointer',marginTop:4}}>
+                    <input type="checkbox" checked={!!form.send_invite} onChange={e=>setForm(p=>({...p,send_invite:e.target.checked, admin_user:{...p.admin_user, password: e.target.checked ? '' : p.admin_user.password}}))}/>
+                    Send activation invite (admin sets their own password)
+                  </label>
+                  {!form.send_invite && (
+                    <div style={S.fg}><label style={S.label}>Password</label>
+                      <input style={S.input} type="password" value={form.admin_user.password} onChange={e=>setForm(p=>({...p,admin_user:{...p.admin_user,password:e.target.value}}))}/></div>
+                  )}
                 </div>
               </div>
             </div>
@@ -355,12 +401,25 @@ export default function OrganizationsPage() {
                         {opts.map(o=><option key={o} value={o}>{o}</option>)}</select></div>
                   ))}
                 </div>
+                <div style={S.fg}><label style={S.label}>Subscription Plan</label>
+                  <select style={S.input} value={selected.plan||'trial'} onChange={e=>applyPlanToSelected(e.target.value)}>
+                    {plans.map(p=><option key={p.key} value={p.key}>{p.label}</option>)}
+                  </select></div>
                 <div style={S.fg}><label style={S.label}>Notes</label>
                   <textarea style={{...S.input,minHeight:70}} value={selected.notes||''} onChange={e=>setSelected(p=>({...p,notes:e.target.value}))}/></div>
               </div>
               <div style={S.card}>
                 <h2 style={S.h2}>Portals & Seats</h2>
-                <PortalRows access={selected.portal_access} seats={selected.seat_limits} onToggle={toggleSelPortal} onSeat={setSelSeat}/>
+                <p style={{fontSize:12,color:'#64748b',marginBottom:12}}>{planIsCustom(selected.plan)?'Enterprise plan — set portals & seats manually.':'Set automatically by the selected plan. Switch to Enterprise (Custom) to edit.'}</p>
+                <PortalRows access={selected.portal_access} seats={selected.seat_limits} onToggle={toggleSelPortal} onSeat={setSelSeat} locked={!planIsCustom(selected.plan)}/>
+                <h2 style={{...S.h2,marginTop:16}}>Features</h2>
+                <div style={{display:'flex',flexWrap:'wrap',gap:12,marginTop:8}}>
+                  {FEATURES.map(([k,l])=>{const locked=!planIsCustom(selected.plan);return(
+                    <label key={k} style={{display:'flex',alignItems:'center',gap:6,fontSize:13,cursor:locked?'not-allowed':'pointer',opacity:locked?.6:1}}>
+                      <input type="checkbox" disabled={locked} checked={!!selected.feature_flags?.[k]} onChange={e=>setSelected(p=>({...p,feature_flags:{...p.feature_flags,[k]:e.target.checked}}))}/>{l}
+                    </label>
+                  );})}
+                </div>
               </div>
             </div>
 

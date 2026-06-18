@@ -77,15 +77,17 @@ cron.schedule('0 8 * * *', async () => {
           console.log(`[FollowUpScanner] Patient ${f.patient_id} has ${pendingLab.length} pending lab order(s) (${testNames}) — follow-up in ${daysAhead} day(s)`);
 
           // Insert in-app notification for lab staff (role 6)
-          await supabase.from('notifications').insert([{
-            type: 'lab_followup_reminder',
-            title: 'Follow-up Alert — Pending Lab Orders',
-            body: `${f.patients?.first_name} ${f.patients?.last_name} has a follow-up in ${daysAhead} day(s) with ${pendingLab.length} pending test(s): ${testNames}`,
-            target_role_id: 6,
-            patient_id: f.patient_id,
-            is_read: false,
-            created_at: new Date().toISOString(),
-          }]).catch(() => {});
+          try {
+            await supabase.from('notifications').insert([{
+              type: 'lab_followup_reminder',
+              title: 'Follow-up Alert — Pending Lab Orders',
+              body: `${f.patients?.first_name} ${f.patients?.last_name} has a follow-up in ${daysAhead} day(s) with ${pendingLab.length} pending test(s): ${testNames}`,
+              target_role_id: 6,
+              patient_id: f.patient_id,
+              is_read: false,
+              created_at: new Date().toISOString(),
+            }]);
+          } catch { /* best-effort notification */ }
         }
 
         // Mark this reminder as sent

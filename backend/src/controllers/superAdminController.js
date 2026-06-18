@@ -1,14 +1,22 @@
 const bcrypt = require('bcryptjs');
+const crypto = require('crypto');
 const jwt = require('jsonwebtoken');
 const supabase = require('../utils/supabase'); // always control-plane DB (public schema)
 const { invalidateOrgCache } = require('../utils/orgClient');
-const { notifyOrgOnboarded } = require('../utils/notify');
+const { notifyOrgOnboarded, sendInvitationEmail } = require('../utils/notify');
 const {
   SUPER_ADMIN_ROLE,
   normalizePortalAccess,
   normalizeSeatLimits,
+  normalizeFeatureFlags,
   countUsersInSeat,
 } = require('../utils/organizationAccess');
+const { getPlanDefaults, listPlans, PLAN_KEYS, isManualPlan, loadPlans } = require('../utils/plans');
+
+const FRONTEND_URL = process.env.FRONTEND_URL || 'https://careopsx.com';
+
+// Warm the editable-plan cache from the DB at boot (falls back to defaults).
+loadPlans(supabase).catch(() => {});
 
 // Shorthand for the control plane tables (defaults to public)
 const adminDb = supabase;
@@ -104,6 +112,7 @@ const getOrganizationDetail = async (req, res) => {
         ...organization,
         portal_access: normalizePortalAccess(organization.portal_access),
         seat_limits: normalizeSeatLimits(organization.seat_limits),
+        feature_flags: normalizeFeatureFlags(organization.feature_flags),
       },
       users: users || [],
       branches: branches || [],
@@ -124,6 +133,8 @@ const createOrganization = async (req, res) => {
       contact_phone,
       seat_limits,
       portal_access,
+      feature_flags,
+      plan,
       billing_status,
       payment_status,
       notes,
@@ -136,6 +147,25 @@ const createOrganization = async (req, res) => {
     } = req.body;
 
     if (!organization_name?.trim()) return res.status(400).json({ error: 'organization_name is required' });
+
+    // Validate the admin email FIRST so we never create an orphan org if it clashes.
+    const wantsAdmin = admin_user?.email && admin_user?.first_name && admin_user?.last_name;
+    if (wantsAdmin) {
+      const { data: existing } = await supabase.from('users').select('id').ilike('email', admin_user.email).maybeSingle();
+      if (existing) return res.status(409).json({ error: 'Admin email already exists. Choose a different email.' });
+    }
+
+    // Apply subscription-plan defaults (selecting a plan sets access + features);
+    // explicit values in the request still win.
+    await loadPlans(adminDb);
+    const planKey = (plan || 'trial').toLowerCase();
+    const planDefaults = getPlanDefaults(planKey) || getPlanDefaults('trial');
+    // Non-custom plans FORCE their bundle (no manual override). Only Enterprise
+    // (custom) accepts hand-picked portals / seats / features.
+    const manual = isManualPlan(planKey);
+    const finalPortalAccess = normalizePortalAccess(manual ? (portal_access || planDefaults.portal_access) : planDefaults.portal_access);
+    const finalSeatLimits   = normalizeSeatLimits(manual ? (seat_limits || planDefaults.seat_limits) : planDefaults.seat_limits);
+    const finalFeatureFlags = normalizeFeatureFlags(manual ? (feature_flags || planDefaults.feature_flags) : planDefaults.feature_flags);
 
     // Auto-generate org code as ORG-1, ORG-2 … (next available serial)
     let finalCode = (organization_code || '').trim();
@@ -171,8 +201,10 @@ const createOrganization = async (req, res) => {
         contact_name: contact_name || null,
         contact_email: contact_email || null,
         contact_phone: contact_phone || null,
-        seat_limits: normalizeSeatLimits(seat_limits),
-        portal_access: normalizePortalAccess(portal_access),
+        plan: planKey,
+        seat_limits: finalSeatLimits,
+        portal_access: finalPortalAccess,
+        feature_flags: finalFeatureFlags,
         billing_status: billing_status || 'trial',
         payment_status: payment_status || 'pending',
         notes: notes || null,
@@ -187,11 +219,14 @@ const createOrganization = async (req, res) => {
     if (error) throw error;
 
     let createdAdmin = null;
-    if (admin_user?.email && admin_user?.password && admin_user?.first_name && admin_user?.last_name) {
-      const { data: existing } = await supabase.from('users').select('id').eq('email', admin_user.email).maybeSingle();
-      if (existing) return res.status(409).json({ error: 'Admin email already exists. Organization was created but admin user was not.' });
+    if (wantsAdmin) {
+      // Invitation-based onboarding: no plaintext password. The admin sets their
+      // own password via the activation link. If a password IS supplied, honour it.
+      const usePassword = !!admin_user.password;
+      const password_hash = await bcrypt.hash(usePassword ? admin_user.password : crypto.randomBytes(24).toString('hex'), 10);
+      const inviteToken  = usePassword ? null : crypto.randomBytes(32).toString('hex');
+      const inviteExpiry = usePassword ? null : new Date(Date.now() + 48 * 60 * 60 * 1000).toISOString();
 
-      const password_hash = await bcrypt.hash(admin_user.password, 10);
       const { data: user, error: userError } = await supabase
         .from('users')
         .insert([{
@@ -203,30 +238,36 @@ const createOrganization = async (req, res) => {
           role_id: 1,
           roles: [1],
           organization_id: organization.id,
-          is_active: true,
+          is_active: usePassword,
+          email_verified: usePassword,
+          account_status: usePassword ? 'active' : 'pending_activation',
+          invite_status: usePassword ? 'active' : 'invited',
+          invite_token: inviteToken,
+          invite_token_expiry: inviteExpiry,
           created_by: req.user.id,
         }])
-        .select('id, first_name, last_name, email, role_id, organization_id')
+        .select('id, first_name, last_name, email, role_id, organization_id, invite_status')
         .single();
       if (userError) throw userError;
       createdAdmin = user;
-    }
 
-    // Send welcome email to the new admin (fire-and-forget — never fails the response)
-    if (createdAdmin?.email) {
-      const enabledPortals = Object.entries(normalizePortalAccess(portal_access))
-        .filter(([, v]) => v === true)
-        .map(([k]) => k.charAt(0).toUpperCase() + k.slice(1));
-
-      notifyOrgOnboarded({
-        adminEmail: createdAdmin.email,
-        adminName:  `${admin_user.first_name} ${admin_user.last_name}`.trim(),
-        orgName:    organization.organization_name,
-        orgCode:    organization.organization_code,
-        loginUrl:   `${process.env.FRONTEND_URL || 'https://careopsx.com'}/login`,
-        portals:    enabledPortals,
-        password:   admin_user.password,
-      }).catch(() => {});
+      if (usePassword) {
+        // Legacy path: send credentials.
+        const enabledPortals = Object.entries(finalPortalAccess).filter(([, v]) => v === true).map(([k]) => k.charAt(0).toUpperCase() + k.slice(1));
+        notifyOrgOnboarded({
+          adminEmail: createdAdmin.email,
+          adminName:  `${admin_user.first_name} ${admin_user.last_name}`.trim(),
+          orgName:    organization.organization_name,
+          orgCode:    organization.organization_code,
+          loginUrl:   `${FRONTEND_URL}/login`,
+          portals:    enabledPortals,
+          password:   admin_user.password,
+        }).catch(() => {});
+      } else {
+        // Preferred path: send an activation invite (admin sets own password).
+        const url = `${FRONTEND_URL}/activate?token=${inviteToken}`;
+        sendInvitationEmail(createdAdmin.email, `${admin_user.first_name} ${admin_user.last_name}`.trim(), url, organization.organization_name, 'Hospital Admin').catch(() => {});
+      }
     }
 
     return res.status(201).json({ organization, admin_user: createdAdmin });
@@ -235,11 +276,34 @@ const createOrganization = async (req, res) => {
   }
 };
 
+const UPDATABLE_ORG_FIELDS = [
+  'organization_name', 'contact_name', 'contact_email', 'contact_phone',
+  'portal_access', 'seat_limits', 'feature_flags', 'plan', 'billing_status',
+  'payment_status', 'notes', 'contract_start', 'contract_end',
+  'tenant_db_url', 'tenant_db_key', 'trial_ends_at',
+];
+
 const updateOrganization = async (req, res) => {
   try {
-    const payload = { ...req.body, updated_by: req.user.id, updated_at: new Date().toISOString() };
+    // Whitelist — never let the client set id/created_by/status/etc. via mass-assignment.
+    const payload = { updated_by: req.user.id, updated_at: new Date().toISOString() };
+    UPDATABLE_ORG_FIELDS.forEach(k => { if (req.body[k] !== undefined) payload[k] = req.body[k]; });
+
+    // Plan governs access. Non-custom plans FORCE their bundle (manual values
+    // ignored). Enterprise (custom) keeps whatever the super admin sends.
+    if (payload.plan !== undefined) {
+      await loadPlans(adminDb);
+      const d = getPlanDefaults(payload.plan);
+      if (d && !isManualPlan(payload.plan)) {
+        payload.portal_access = d.portal_access;
+        payload.seat_limits   = d.seat_limits;
+        payload.feature_flags = d.feature_flags;
+      }
+    }
     if (payload.portal_access) payload.portal_access = normalizePortalAccess(payload.portal_access);
     if (payload.seat_limits)   payload.seat_limits   = normalizeSeatLimits(payload.seat_limits);
+    if (payload.feature_flags) payload.feature_flags = normalizeFeatureFlags(payload.feature_flags);
+
     const { data, error } = await adminDb.from('organizations').update(payload).eq('id', req.params.id).select('*').single();
     if (error) throw error;
     // If DB credentials changed, flush the cached client so next request re-resolves
@@ -355,7 +419,7 @@ const resetUserPassword = async (req, res) => {
     const password_hash = await bcrypt.hash(new_password, 10);
     const { error } = await supabase
       .from('users')
-      .update({ password_hash, updated_at: new Date().toISOString() })
+      .update({ password_hash, updated_at: new Date().toISOString(), failed_login_attempts: 0, locked_until: null, force_password_change: true })
       .eq('id', user_id)
       .eq('organization_id', req.params.id);
 
@@ -416,8 +480,112 @@ const deleteOrganization = async (req, res) => {
   }
 };
 
+// ── List subscription plans (for the create/edit UI) ─────────────────────────
+const getPlans = async (req, res) => {
+  try {
+    await loadPlans(adminDb);
+    return res.json({ plans: listPlans() });
+  } catch (err) { return res.status(500).json({ error: err.message }); }
+};
+
+// ── Edit a plan's structure (portals / seats / features / price) ──────────────
+const updatePlan = async (req, res) => {
+  try {
+    const { key } = req.params;
+    await loadPlans(adminDb); // ensure the row exists (seeds defaults if missing)
+    const allowed = ['label', 'monthly_price', 'portal_access', 'seat_limits', 'feature_flags', 'sort_order'];
+    const payload = { updated_by: req.user.id, updated_at: new Date().toISOString() };
+    allowed.forEach(k => { if (req.body[k] !== undefined) payload[k] = req.body[k]; });
+    const { data, error } = await adminDb.from('subscription_plans').update(payload).eq('key', key).select('*').single();
+    if (error) throw error;
+    await loadPlans(adminDb); // refresh cache so new structure applies immediately
+    writeAudit({ admin_user_id: req.user.id, action: 'UPDATE_PLAN', details: { key }, created_at: new Date().toISOString() });
+    return res.json({ message: 'Plan updated', plan: data });
+  } catch (err) { return res.status(500).json({ error: err.message }); }
+};
+
+// ── Feature upgrade requests (super admin queue) ──────────────────────────────
+const getFeatureRequests = async (req, res) => {
+  try {
+    const { status } = req.query;
+    let q = adminDb.from('feature_requests').select('*').order('created_at', { ascending: false }).limit(200);
+    if (status) q = q.eq('status', status);
+    const { data, error } = await q;
+    if (error) throw error;
+    // Attach org names.
+    const orgIds = [...new Set((data || []).map(r => r.organization_id).filter(Boolean))];
+    const nameMap = {};
+    if (orgIds.length) {
+      const { data: orgs } = await adminDb.from('organizations').select('id, organization_name, plan').in('id', orgIds);
+      (orgs || []).forEach(o => { nameMap[o.id] = o; });
+    }
+    return res.json({ requests: (data || []).map(r => ({ ...r, organization: nameMap[r.organization_id] || null })) });
+  } catch (err) { return res.status(500).json({ error: err.message }); }
+};
+
+// Approve → grant the feature / upgrade the plan. Reject → just close it.
+const handleFeatureRequest = async (req, res) => {
+  try {
+    const { action, admin_note } = req.body; // 'approve' | 'reject'
+    const { data: reqRow } = await adminDb.from('feature_requests').select('*').eq('id', req.params.id).maybeSingle();
+    if (!reqRow) return res.status(404).json({ error: 'Request not found' });
+    if (reqRow.status !== 'pending') return res.status(409).json({ error: 'Request already handled' });
+
+    if (action === 'approve') {
+      const { data: org } = await adminDb.from('organizations').select('feature_flags, plan').eq('id', reqRow.organization_id).single();
+      if (reqRow.request_type === 'feature' && reqRow.feature) {
+        const flags = normalizeFeatureFlags(org?.feature_flags);
+        flags[reqRow.feature] = true; // grant just this capability on top of the plan
+        await adminDb.from('organizations').update({ feature_flags: flags, updated_by: req.user.id, updated_at: new Date().toISOString() }).eq('id', reqRow.organization_id);
+      } else if (reqRow.request_type === 'plan' && reqRow.target_plan) {
+        await loadPlans(adminDb);
+        const d = getPlanDefaults(reqRow.target_plan);
+        const patch = { plan: reqRow.target_plan, updated_by: req.user.id, updated_at: new Date().toISOString() };
+        if (d && !isManualPlan(reqRow.target_plan)) { patch.portal_access = d.portal_access; patch.seat_limits = d.seat_limits; patch.feature_flags = d.feature_flags; }
+        await adminDb.from('organizations').update(patch).eq('id', reqRow.organization_id);
+      }
+    } else if (action !== 'reject') {
+      return res.status(400).json({ error: 'action must be approve or reject' });
+    }
+
+    await adminDb.from('feature_requests').update({
+      status: action === 'approve' ? 'approved' : 'rejected',
+      admin_note: admin_note || null, handled_by: req.user.id, handled_at: new Date().toISOString(),
+    }).eq('id', req.params.id);
+    writeAudit({ admin_user_id: req.user.id, action: `FEATURE_REQ_${action.toUpperCase()}`, target_org_id: reqRow.organization_id, details: { request_id: req.params.id }, created_at: new Date().toISOString() });
+    return res.json({ message: action === 'approve' ? 'Request approved and access granted' : 'Request rejected' });
+  } catch (err) { return res.status(500).json({ error: err.message }); }
+};
+
+// ── (Re)send an activation invite to an org user ──────────────────────────────
+const inviteOrgUser = async (req, res) => {
+  try {
+    const { user_id } = req.body;
+    if (!user_id) return res.status(400).json({ error: 'user_id is required' });
+    const { data: user } = await supabase.from('users')
+      .select('id, first_name, last_name, email, invite_status, organization_id')
+      .eq('id', user_id).eq('organization_id', req.params.id).maybeSingle();
+    if (!user) return res.status(404).json({ error: 'User not found in this organization' });
+    if (user.invite_status === 'active') return res.status(409).json({ error: 'This account is already activated' });
+
+    const token  = crypto.randomBytes(32).toString('hex');
+    const expiry = new Date(Date.now() + 48 * 60 * 60 * 1000).toISOString();
+    await supabase.from('users').update({ invite_token: token, invite_token_expiry: expiry, invite_status: 'invited', account_status: 'pending_activation' }).eq('id', user.id);
+
+    const { data: org } = await adminDb.from('organizations').select('organization_name').eq('id', req.params.id).maybeSingle();
+    const url = `${FRONTEND_URL}/activate?token=${token}`;
+    const sent = await sendInvitationEmail(user.email, `${user.first_name} ${user.last_name}`.trim(), url, org?.organization_name, 'Hospital Admin');
+    writeAudit({ admin_user_id: req.user.id, action: 'INVITE_ORG_USER', target_org_id: Number(req.params.id), details: { user_id }, created_at: new Date().toISOString() });
+    return res.json({ message: sent ? 'Invitation sent' : 'Invitation created — email unavailable, share the link manually.', ...(!sent && process.env.NODE_ENV !== 'production' ? { activate_url: url } : {}) });
+  } catch (err) { return res.status(500).json({ error: err.message }); }
+};
+
 module.exports = {
   getNextOrgCode,
+  getPlans,
+  updatePlan,
+  getFeatureRequests,
+  handleFeatureRequest,
   getOrganizations,
   getOrganizationDetail,
   createOrganization,
@@ -425,6 +593,7 @@ module.exports = {
   updateOrganizationStatus,
   impersonateOrganization,
   resetUserPassword,
+  inviteOrgUser,
   deleteOrganization,
   deleteOrgUser,
 };

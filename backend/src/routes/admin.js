@@ -45,6 +45,10 @@ router.post('/users/:id/invite', ...adminOnly, ctrl.inviteUser);
 // My effective permissions (any authenticated user) — for menu gating
 router.get('/my-permissions', verifyToken, ctrl.getMyPermissions);
 
+// Plan info + feature upgrade requests (org admin)
+router.get('/plan-info', ...adminOnly, ctrl.getMyPlanInfo);
+router.post('/request-feature', ...adminOnly, ctrl.requestFeature);
+
 // RBAC permission matrix
 router.get('/permissions', ...adminOnly, ctrl.getPermissionMatrix);
 router.put('/permissions/:roleId', ...adminOnly, ctrl.updateRolePermissions);

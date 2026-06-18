@@ -351,12 +351,14 @@ const createUser = async (req, res) => {
     // Mirror to an employee record so HRMS ↔ User Management stay in sync.
     const { data: existingStaff } = await supabase.from('staff_profiles').select('id').eq('user_id', data.id).maybeSingle();
     if (!existingStaff) {
-      await supabase.from('staff_profiles').insert([{
-        organization_id: organizationId, user_id: data.id,
-        full_name: `${first_name} ${last_name}`.trim(), email, mobile: phone || null,
-        department: department || null, designation: designation || null, role_id: primaryRole,
-        employment_status: invite ? 'Inactive' : 'Active', is_active: !invite,
-      }]).catch(() => {});
+      try {
+        await supabase.from('staff_profiles').insert([{
+          organization_id: organizationId, user_id: data.id,
+          full_name: `${first_name} ${last_name}`.trim(), email, mobile: phone || null,
+          department: department || null, designation: designation || null, role_id: primaryRole,
+          employment_status: invite ? 'Inactive' : 'Active', is_active: !invite,
+        }]);
+      } catch { /* mirror is best-effort */ }
     }
 
     // Auto-send the invitation email on creation.
@@ -633,6 +635,51 @@ const inviteUser = async (req, res) => {
   } catch (err) { return res.status(500).json({ error: err.message }); }
 };
 
+// ── Plan info + feature upgrade requests (org admin side) ─────────────────────
+const { normalizeFeatureFlags } = require('../utils/organizationAccess');
+const FEATURE_CATALOG = [
+  { key: 'hrms',         label: 'HRMS',            desc: 'Staff, attendance, leave, payroll, shifts.' },
+  { key: 'ai_assistant', label: 'AI Assistant',    desc: 'Natural-language insights, reports & summaries.' },
+  { key: 'queue_voice',  label: 'Queue Voice',     desc: 'Automated voice announcements at the lobby.' },
+];
+
+// What the org has now + which features are locked (to show "request access").
+const getMyPlanInfo = async (req, res) => {
+  try {
+    const { organization } = await getOrganizationContext(req);
+    const flags = normalizeFeatureFlags(organization?.feature_flags);
+    const features = FEATURE_CATALOG.map(f => ({ ...f, enabled: flags[f.key] === true }));
+    // Any pending requests so the UI can show "Requested".
+    const { data: pending } = await req.db.from('feature_requests')
+      .select('feature, status').eq('organization_id', organization?.id).eq('status', 'pending');
+    const pendingSet = new Set((pending || []).map(p => p.feature));
+    return res.json({
+      plan: organization?.plan || 'trial',
+      features: features.map(f => ({ ...f, requested: pendingSet.has(f.key) })),
+    });
+  } catch (err) { return res.status(500).json({ error: err.message }); }
+};
+
+// Org admin raises a request to unlock a feature (super admin grants after payment).
+const requestFeature = async (req, res) => {
+  try {
+    const { organizationId } = await getOrganizationContext(req);
+    const { feature, message } = req.body;
+    if (!FEATURE_CATALOG.some(f => f.key === feature)) return res.status(400).json({ error: 'Unknown feature' });
+    // Avoid duplicate open requests.
+    const { data: existing } = await req.db.from('feature_requests')
+      .select('id').eq('organization_id', organizationId).eq('feature', feature).eq('status', 'pending').maybeSingle();
+    if (existing) return res.status(409).json({ error: 'A request for this feature is already pending.' });
+    const { data, error } = await req.db.from('feature_requests').insert([{
+      organization_id: organizationId, requested_by: req.user.id,
+      request_type: 'feature', feature, message: message || null, status: 'pending',
+    }]).select('*').single();
+    if (error) throw error;
+    await auditLog({ user_id: req.user.id, role_id: req.user.role_id, organization_id: organizationId, action: 'REQUEST_FEATURE', module: 'Admin', entity_type: 'feature_request', entity_id: data.id, description: feature });
+    return res.status(201).json({ message: 'Request submitted. Our support team will contact you.', request: data });
+  } catch (err) { return res.status(500).json({ error: err.message }); }
+};
+
 // ── RBAC Permission Matrix ────────────────────────────────────────────────────
 const { MODULES, ACTIONS, getEffectivePermissions, getEffectivePermissionsForRoles, rolesOf } = require('../utils/permissions');
 
@@ -837,6 +884,7 @@ module.exports = {
   uploadLogo,
   getUsers, createUser, updateUser, toggleUserActive, deleteUser, bulkDeleteUsers, resetUserPassword,
   setUserStatus, inviteUser, getPermissionMatrix, updateRolePermissions, getMyPermissions,
+  getMyPlanInfo, requestFeature,
   getLabTestCatalog, createLabTest, updateLabTest, deleteLabTest,
   getSpecializations, createSpecialization, toggleSpecialization, deleteSpecialization,
   getRooms, createRoom, updateRoom, deleteRoom,

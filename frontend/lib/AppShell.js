@@ -252,7 +252,7 @@ function SidebarContent({ groups, currentRole, onNavigate, collapsed = false }) 
         )}
       </div>
 
-      <nav style={{ flex: 1, padding: '12px 8px', overflowY: 'auto' }}>
+      <nav className="sidebar-scroll" style={{ flex: 1, padding: '12px 8px', overflowY: 'auto' }}>
         {groups.map((group) => (
           <div key={group.label} style={{ marginBottom: 8 }}>
             {!collapsed && group.label && (
@@ -369,6 +369,11 @@ export default function AppShell({ title, roleLabel, currentRole, groups, user, 
 
       {mobileOpen && <div className="app-shell-overlay" onClick={() => setMobileOpen(false)} />}
       <div className={`app-shell-sidebar-mobile${mobileOpen ? ' is-open' : ''}`}>
+        <button
+          onClick={() => setMobileOpen(false)}
+          aria-label="Close menu"
+          style={{ position: 'absolute', top: 14, right: 12, zIndex: 2, width: 30, height: 30, borderRadius: 8, border: '1px solid rgba(255,255,255,.18)', background: 'rgba(255,255,255,.08)', color: '#fff', cursor: 'pointer', fontSize: 18, lineHeight: 1, display: 'flex', alignItems: 'center', justifyContent: 'center' }}
+        >×</button>
         <SidebarContent groups={groups} currentRole={currentRole} onNavigate={() => setMobileOpen(false)} />
       </div>
 

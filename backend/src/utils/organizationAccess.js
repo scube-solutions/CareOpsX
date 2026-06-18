@@ -1,4 +1,5 @@
 const supabase        = require('./supabase');
+const { normalizeFeatureFlags } = require('./plans');
 const adminDb         = supabase; // control-plane tables (defaults to public)
 
 const SUPER_ADMIN_ROLE = 9;
@@ -95,7 +96,17 @@ const getOrganizationContext = async (req) => {
     organizationId,
     portalAccess: normalizePortalAccess(organization?.portal_access),
     seatLimits: normalizeSeatLimits(organization?.seat_limits),
+    featureFlags: normalizeFeatureFlags(organization?.feature_flags),
   };
+};
+
+// Check whether a plan-gated capability (ai_assistant | hrms | queue_voice) is on.
+const ensureFeatureEnabled = (featureFlags, feature) => {
+  const flags = normalizeFeatureFlags(featureFlags);
+  if (flags[feature] === false) {
+    return { ok: false, message: `The "${feature}" feature is not included in your organization's plan.` };
+  }
+  return { ok: true };
 };
 
 const ensureOrganizationOperational = (organization) => {
@@ -173,5 +184,7 @@ module.exports = {
   ensureOrganizationOperational,
   ensurePortalEnabled,
   ensureSeatAvailable,
+  ensureFeatureEnabled,
+  normalizeFeatureFlags,
   countUsersInSeat,
 };

@@ -8,13 +8,16 @@ export default function AISummaryCard() {
   const [loading, setLoading] = useState(true);
   const [error, setError]     = useState('');
 
+  const [hidden, setHidden] = useState(false);
   const load = async () => {
     setLoading(true); setError('');
     try { const d = await api('/ai/summary'); setSummary(d.summary || ''); }
-    catch (e) { setError(e.message); }
+    catch (e) { if (e.status === 403) { setHidden(true); } else setError(e.message); }
     finally { setLoading(false); }
   };
   useEffect(() => { load(); }, []);
+
+  if (hidden) return null; // AI not in this org's plan
 
   return (
     <div style={{ background: 'linear-gradient(135deg, #0f1f3d 0%, #1e3f85 100%)', borderRadius: 14, padding: '18px 22px', marginBottom: 24, color: '#fff', boxShadow: '0 4px 16px rgba(15,31,61,.18)' }}>
