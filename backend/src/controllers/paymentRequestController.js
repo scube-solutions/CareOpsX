@@ -2,106 +2,100 @@
 // Patient creates a "pay at reception" request
 const createRequest = async (req, res) => {
   try {
-    const supabase = req.db;
+    const db = req.db;
     const { patient_name, patient_phone, patient_user_id, doctor_id, doctor_name, specialty, appointment_date, appointment_time, consultation_fee } = req.body;
     if (!patient_name || !consultation_fee) return res.status(400).json({ error: 'patient_name and consultation_fee required' });
 
-    const { data, error } = await supabase.from('appointment_payment_requests').insert([{
-      patient_name,
-      patient_phone:   patient_phone || null,
-      patient_user_id: patient_user_id || req.user?.id || null,
-      doctor_id:       doctor_id || null,
-      doctor_name:     doctor_name || null,
-      specialty:       specialty || null,
-      appointment_date,
-      appointment_time,
-      consultation_fee: parseFloat(consultation_fee),
-      status:          'pending',
-      organization_id: req.user?.organization_id ?? null,
-      created_at:      new Date().toISOString(),
-    }]).select('id, status, created_at').single();
+    const result = await db.query(
+      `INSERT INTO appointment_payment_requests
+         (patient_name, patient_phone, patient_user_id, doctor_id, doctor_name, specialty,
+          appointment_date, appointment_time, consultation_fee, status, organization_id, created_at)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,'pending',$10,$11)
+       RETURNING id, status, created_at`,
+      [
+        patient_name, patient_phone || null, patient_user_id || req.user?.id || null,
+        doctor_id || null, doctor_name || null, specialty || null,
+        appointment_date, appointment_time, parseFloat(consultation_fee),
+        req.user?.organization_id ?? null, new Date().toISOString()
+      ]
+    );
 
-    if (error) throw error;
-    return res.status(201).json({ request: data });
+    return res.status(201).json({ request: result.rows[0] });
   } catch (err) { return res.status(500).json({ error: err.message }); }
 };
 
 // Receptionist gets all pending requests
 const getPendingRequests = async (req, res) => {
   try {
-    const supabase = req.db;
+    const db = req.db;
     const organizationId = req.user?.organization_id ?? null;
-    let q = supabase.from('appointment_payment_requests')
-      .select('*')
-      .eq('status', 'pending')
-      .order('created_at', { ascending: false });
-    if (organizationId) q = q.eq('organization_id', organizationId);
-    const { data, error } = await q;
-    if (error) throw error;
-    return res.json({ requests: data || [] });
+    const params = ['pending'];
+    let orgClause = '';
+    if (organizationId) { params.push(organizationId); orgClause = ` AND organization_id = $${params.length}`; }
+    const result = await db.query(
+      `SELECT * FROM appointment_payment_requests WHERE status = $1${orgClause} ORDER BY created_at DESC`,
+      params
+    );
+    return res.json({ requests: result.rows || [] });
   } catch (err) { return res.status(500).json({ error: err.message }); }
 };
 
 // Receptionist marks payment received
 const approveRequest = async (req, res) => {
   try {
-    const supabase = req.db;
+    const db = req.db;
     const organizationId = req.user?.organization_id ?? null;
     const { id } = req.params;
     const { payment_mode = 'cash' } = req.body || {};
 
-    let updQ = supabase.from('appointment_payment_requests')
-      .update({ status: 'approved', approved_by: req.user.id, approved_at: new Date().toISOString() })
-      .eq('id', id);
-    if (organizationId) updQ = updQ.eq('organization_id', organizationId);
-    const { data, error } = await updQ.select('*').single();
-    if (error) throw error;
-    if (!data) return res.status(404).json({ error: 'Payment request not found' });
+    const updParams = [req.user.id, new Date().toISOString(), id];
+    let orgClause = '';
+    if (organizationId) { updParams.push(organizationId); orgClause = ` AND organization_id = $${updParams.length}`; }
 
-    // Auto-create billing invoice so it appears in patient payment history
+    const updRes = await db.query(
+      `UPDATE appointment_payment_requests
+       SET status='approved', approved_by=$1, approved_at=$2
+       WHERE id=$3${orgClause}
+       RETURNING *`,
+      updParams
+    );
+    if (!updRes.rows.length) return res.status(404).json({ error: 'Payment request not found' });
+    const data = updRes.rows[0];
+
+    // Auto-create billing invoice
     try {
-      // Resolve patient record
       let patient_id = null;
       if (data.patient_user_id) {
-        const { data: pat } = await supabase.from('patients').select('id').eq('user_id', data.patient_user_id).maybeSingle();
-        if (pat) patient_id = pat.id;
+        const patRes = await db.query(`SELECT id FROM patients WHERE user_id = $1 LIMIT 1`, [data.patient_user_id]);
+        if (patRes.rows[0]) patient_id = patRes.rows[0].id;
       }
-      // Fallback: match by phone
       if (!patient_id && data.patient_phone) {
-        const { data: pat } = await supabase.from('patients').select('id').eq('phone', data.patient_phone).maybeSingle();
-        if (pat) patient_id = pat.id;
+        const patRes = await db.query(`SELECT id FROM patients WHERE phone = $1 LIMIT 1`, [data.patient_phone]);
+        if (patRes.rows[0]) patient_id = patRes.rows[0].id;
       }
 
       if (patient_id) {
         const invoiceNumber = `INV-${new Date().toISOString().slice(2,7).replace('-','')}-${Math.floor(Math.random()*90000+10000)}`;
         const amount = parseFloat(data.consultation_fee) || 0;
 
-        const { data: inv } = await supabase.from('invoices').insert([{
-          patient_id,
-          doctor_id:        data.doctor_id || null,
-          invoice_number:   invoiceNumber,
-          invoice_type:     'consultation',
-          consultation_fee: amount,
-          total_amount:     amount,
-          paid_amount:      amount,
-          balance_amount:   0,
-          status:           'paid',
-          notes:            `Collected at reception — ${data.appointment_date || ''}`,
-          organization_id:  organizationId,
-          created_at:       new Date().toISOString(),
-        }]).select('id').single();
+        const invRes = await db.query(
+          `INSERT INTO invoices
+             (patient_id, doctor_id, invoice_number, invoice_type, consultation_fee, total_amount,
+              paid_amount, balance_amount, status, notes, organization_id, created_at)
+           VALUES ($1,$2,$3,'consultation',$4,$4,$4,0,'paid',$5,$6,$7)
+           RETURNING id`,
+          [patient_id, data.doctor_id || null, invoiceNumber, amount,
+           `Collected at reception — ${data.appointment_date || ''}`, organizationId, new Date().toISOString()]
+        );
 
-        if (inv?.id) {
-          await supabase.from('payments').insert([{
-            invoice_id:   inv.id,
-            amount,
-            payment_mode,
-            payment_date: new Date().toISOString(),
-            collected_by: req.user.id,
-            notes:        'Collected at reception desk',
-            organization_id: organizationId,
-            created_at:   new Date().toISOString(),
-          }]);
+        const invId = invRes.rows[0]?.id;
+        if (invId) {
+          await db.query(
+            `INSERT INTO payments
+               (invoice_id, amount, payment_mode, payment_date, collected_by, notes, organization_id, created_at)
+             VALUES ($1,$2,$3,$4,$5,'Collected at reception desk',$6,$7)`,
+            [invId, amount, payment_mode, new Date().toISOString(), req.user.id, organizationId, new Date().toISOString()]
+          );
         }
       }
     } catch (_) {}
@@ -109,14 +103,15 @@ const approveRequest = async (req, res) => {
     // Push notification to patient
     if (data.patient_user_id) {
       try {
-        await supabase.from('notifications').insert([{
-          user_id:    data.patient_user_id,
-          title:      'Payment Confirmed',
-          message:    `Your consultation fee of ₹${data.consultation_fee} has been received at reception. You can now confirm your appointment.`,
-          type:       'payment',
-          is_read:    false,
-          created_at: new Date().toISOString(),
-        }]);
+        await db.query(
+          `INSERT INTO notifications (user_id, title, message, type, is_read, created_at)
+           VALUES ($1,'Payment Confirmed',$2,'payment',false,$3)`,
+          [
+            data.patient_user_id,
+            `Your consultation fee of ₹${data.consultation_fee} has been received at reception. You can now confirm your appointment.`,
+            new Date().toISOString()
+          ]
+        );
       } catch (_) {}
     }
 
@@ -127,14 +122,17 @@ const approveRequest = async (req, res) => {
 // Patient polls status of their request
 const checkStatus = async (req, res) => {
   try {
-    const supabase = req.db;
+    const db = req.db;
     const organizationId = req.user?.organization_id ?? null;
-    let q = supabase.from('appointment_payment_requests')
-      .select('id, status, approved_at')
-      .eq('id', req.params.id);
-    if (organizationId) q = q.eq('organization_id', organizationId);
-    const { data, error } = await q.single();
-    if (error || !data) return res.status(404).json({ error: 'Request not found' });
+    const params = [req.params.id];
+    let orgClause = '';
+    if (organizationId) { params.push(organizationId); orgClause = ` AND organization_id = $${params.length}`; }
+    const result = await db.query(
+      `SELECT id, status, approved_at FROM appointment_payment_requests WHERE id = $1${orgClause}`,
+      params
+    );
+    if (!result.rows.length) return res.status(404).json({ error: 'Request not found' });
+    const data = result.rows[0];
     return res.json({ status: data.status, approved_at: data.approved_at });
   } catch (err) { return res.status(500).json({ error: err.message }); }
 };

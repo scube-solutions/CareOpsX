@@ -6,15 +6,12 @@ const { verifyToken, requireRole } = require('../middlewares/auth');
 
 // Public endpoints for browsing doctors (used by booking flow)
 router.get('/specializations', async (req, res) => {
-  const supabase = require('../utils/supabase');
+  const db = require('../utils/db');
   try {
-    const { data, error } = await supabase
-      .from('specializations')
-      .select('name')
-      .eq('is_active', true)
-      .order('name');
-    if (error) throw error;
-    return res.json({ specializations: (data || []).map(s => s.name) });
+    const result = await db.query(
+      'SELECT name FROM specializations WHERE is_active = true ORDER BY name'
+    );
+    return res.json({ specializations: (result.rows || []).map(s => s.name) });
   } catch (err) { return res.status(500).json({ error: err.message }); }
 });
 router.get('/', getDoctors);

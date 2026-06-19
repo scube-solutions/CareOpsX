@@ -1,6 +1,6 @@
-const supabase        = require('./supabase');
+const db = require('./db');
 const { normalizeFeatureFlags } = require('./plans');
-const adminDb         = supabase; // control-plane tables (defaults to public)
+const adminDb         = db;
 
 const SUPER_ADMIN_ROLE = 9;
 
@@ -31,6 +31,7 @@ const ROLE_TO_SEAT_KEY = {
   1: 'admin',
   2: 'doctor',
   3: 'patient',
+  4: 'staff',
   5: 'receptionist',
   6: 'lab',
   7: 'pharmacist',
@@ -40,8 +41,6 @@ const ROLE_TO_SEAT_KEY = {
   12: 'billing_executive',
 };
 
-// Nurse (10) and HR Manager (11) intentionally have NO portal key — they are not
-// gated by org portal toggles. ensurePortalEnabled returns ok when no key maps.
 const ROLE_TO_PORTAL_KEY = {
   1: 'admin',
   2: 'doctor',
@@ -52,7 +51,6 @@ const ROLE_TO_PORTAL_KEY = {
   8: 'analytics',
 };
 
-// Human-readable labels — shared source of truth for role names.
 const ROLE_LABELS = {
   1: 'Admin',
   2: 'Doctor',
@@ -79,9 +77,8 @@ const isSuperAdmin = (req) => {
 
 const getOrganizationById = async (organizationId) => {
   if (!organizationId) return null;
-  const { data, error } = await adminDb.from('organizations').select('*').eq('id', organizationId).single();
-  if (error) throw error;
-  return data;
+  const result = await db.query('SELECT * FROM superadmin.organizations WHERE id = $1 LIMIT 1', [organizationId]);
+  return result.rows[0] || null;
 };
 
 const getOrganizationContext = async (req) => {
@@ -100,7 +97,6 @@ const getOrganizationContext = async (req) => {
   };
 };
 
-// Check whether a plan-gated capability (ai_assistant | hrms | queue_voice) is on.
 const ensureFeatureEnabled = (featureFlags, feature) => {
   const flags = normalizeFeatureFlags(featureFlags);
   if (flags[feature] === false) {
@@ -134,17 +130,15 @@ const ensureSeatAvailable = async ({ organizationId, seatLimits, roleId, exclude
   const limit = Number(normalized[seatKey]);
   if (!Number.isFinite(limit) || limit < 0) return { ok: true };
 
-  let query = supabase
-    .from('users')
-    .select('*', { count: 'exact', head: true })
-    .eq('organization_id', organizationId)
-    .eq('role_id', roleId)
-    .eq('is_active', true);
+  let queryText = 'SELECT COUNT(*)::int FROM users WHERE organization_id = $1 AND role_id = $2 AND is_active = true';
+  const params = [organizationId, roleId];
+  if (excludeUserId) {
+    params.push(excludeUserId);
+    queryText += ` AND id != $${params.length}`;
+  }
 
-  if (excludeUserId) query = query.neq('id', excludeUserId);
-
-  const { count, error } = await query;
-  if (error) throw error;
+  const result = await db.query(queryText, params);
+  const count = result.rows[0].count;
   if ((count || 0) >= limit) {
     return { ok: false, message: `Seat limit reached for ${seatKey}. Allowed: ${limit}.` };
   }
@@ -158,13 +152,11 @@ const countUsersInSeat = async (organizationId, seatKey) => {
 
   if (!roleIds.length) return 0;
 
-  const { count, error } = await supabase
-    .from('users')
-    .select('*', { count: 'exact', head: true })
-    .eq('organization_id', organizationId)
-    .in('role_id', roleIds)
-    .eq('is_active', true);
-  if (error) throw error;
+  const result = await db.query(
+    'SELECT COUNT(*)::int FROM users WHERE organization_id = $1 AND role_id = ANY($2) AND is_active = true',
+    [organizationId, roleIds]
+  );
+  const count = result.rows[0].count;
   return count || 0;
 };
 
@@ -188,3 +180,4 @@ module.exports = {
   normalizeFeatureFlags,
   countUsersInSeat,
 };
+

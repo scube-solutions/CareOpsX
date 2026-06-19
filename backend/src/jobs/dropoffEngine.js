@@ -1,5 +1,5 @@
 const cron = require('node-cron');
-const supabase = require('../utils/supabase');
+const db = require('../utils/db');
 
 // Risk scoring rules (configurable via drop_off_rules table)
 const DEFAULT_RULES = [
@@ -11,20 +11,30 @@ const DEFAULT_RULES = [
 ];
 
 const addToWatchlist = async (patient_id, risk_score, risk_level, risk_reason, trigger_type) => {
-  const { data: existing } = await supabase.from('drop_off_watchlist')
-    .select('id, risk_score').eq('patient_id', patient_id).in('outcome', ['at_risk', 'still_at_risk']).maybeSingle();
+  const existingRes = await db.query(
+    `SELECT id, risk_score FROM drop_off_watchlist 
+     WHERE patient_id = $1 AND outcome = ANY($2) LIMIT 1`,
+    [patient_id, ['at_risk', 'still_at_risk']]
+  );
+  const existing = existingRes.rows[0];
 
   if (existing) {
     if (risk_score > existing.risk_score) {
-      await supabase.from('drop_off_watchlist').update({ risk_score, risk_level, risk_reason, updated_at: new Date().toISOString() }).eq('id', existing.id);
+      await db.query(
+        `UPDATE drop_off_watchlist 
+         SET risk_score = $1, risk_level = $2, risk_reason = $3, updated_at = $4 
+         WHERE id = $5`,
+        [risk_score, risk_level, risk_reason, new Date().toISOString(), existing.id]
+      );
     }
     return;
   }
 
-  await supabase.from('drop_off_watchlist').insert([{
-    patient_id, risk_score, risk_level, risk_reason, trigger_type,
-    outcome: 'at_risk', action_history: [], created_at: new Date().toISOString()
-  }]);
+  await db.query(
+    `INSERT INTO drop_off_watchlist (patient_id, risk_score, risk_level, risk_reason, trigger_type, outcome, action_history, created_at)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+    [patient_id, risk_score, risk_level, risk_reason, trigger_type, 'at_risk', JSON.stringify([]), new Date().toISOString()]
+  );
 };
 
 // Runs every night at 11:00 PM
@@ -35,37 +45,47 @@ cron.schedule('0 23 * * *', async () => {
 
     // Rule 1: Lab orders ordered but not collected after 5 days
     const fiveDaysAgo = new Date(Date.now() - 5 * 24 * 60 * 60 * 1000).toISOString();
-    const { data: pendingLabs } = await supabase.from('lab_orders')
-      .select('patient_id').eq('status', 'ordered').lt('ordered_at', fiveDaysAgo);
+    const pendingLabsRes = await db.query(
+      'SELECT patient_id FROM lab_orders WHERE status = $1 AND ordered_at < $2',
+      ['ordered', fiveDaysAgo]
+    );
+    const pendingLabs = pendingLabsRes.rows || [];
 
-    for (const lab of pendingLabs || []) {
+    for (const lab of pendingLabs) {
       await addToWatchlist(lab.patient_id, 30, 'medium', 'Lab test not collected within 5 days', 'lab_not_collected');
     }
 
     // Rule 2: Lab report ready but patient did not return (7 days)
     const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
-    const { data: readyReports } = await supabase.from('lab_reports')
-      .select('patient_id').eq('status', 'ready').lt('uploaded_at', sevenDaysAgo);
+    const readyReportsRes = await db.query(
+      'SELECT patient_id FROM lab_reports WHERE status = $1 AND uploaded_at < $2',
+      ['ready', sevenDaysAgo]
+    );
+    const readyReports = readyReportsRes.rows || [];
 
-    for (const r of readyReports || []) {
+    for (const r of readyReports) {
       await addToWatchlist(r.patient_id, 40, 'high', 'Patient did not return after report was ready (7 days)', 'no_return_after_report');
     }
 
     // Rule 3: Chronic patients with missed follow-ups
-    const { data: missedChronicFollowups } = await supabase.from('follow_up_plans')
-      .select('patient_id, patients(chronic_disease_tag)')
-      .eq('status', 'missed')
-      .not('disease_tag', 'is', null);
+    const missedChronicFollowupsRes = await db.query(
+      'SELECT patient_id, disease_tag FROM follow_up_plans WHERE status = $1 AND disease_tag IS NOT NULL',
+      ['missed']
+    );
+    const missedChronicFollowups = missedChronicFollowupsRes.rows || [];
 
-    for (const f of missedChronicFollowups || []) {
+    for (const f of missedChronicFollowups) {
       await addToWatchlist(f.patient_id, 60, 'high', `Chronic patient missed follow-up (${f.disease_tag})`, 'chronic_missed_followup');
     }
 
     // Rule 4: Multiple missed follow-ups (critical)
-    const { data: allMissed } = await supabase.from('follow_up_plans')
-      .select('patient_id').eq('status', 'missed');
+    const allMissedRes = await db.query(
+      'SELECT patient_id FROM follow_up_plans WHERE status = $1',
+      ['missed']
+    );
+    const allMissed = allMissedRes.rows || [];
 
-    const missedCounts = (allMissed || []).reduce((acc, f) => {
+    const missedCounts = allMissed.reduce((acc, f) => {
       acc[f.patient_id] = (acc[f.patient_id] || 0) + 1;
       return acc;
     }, {});
@@ -77,8 +97,13 @@ cron.schedule('0 23 * * *', async () => {
     }
 
     // Rule 5: Repeated no-shows
-    const { data: noShows } = await supabase.from('appointments').select('patient_id').eq('status', 'no_show');
-    const noShowCounts = (noShows || []).reduce((acc, a) => {
+    const noShowsRes = await db.query(
+      'SELECT patient_id FROM appointments WHERE status = $1',
+      ['no_show']
+    );
+    const noShows = noShowsRes.rows || [];
+    
+    const noShowCounts = noShows.reduce((acc, a) => {
       acc[a.patient_id] = (acc[a.patient_id] || 0) + 1;
       return acc;
     }, {});

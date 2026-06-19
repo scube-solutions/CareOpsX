@@ -7,8 +7,16 @@ const { getEffectivePermissionsForRoles, rolesOf } = require('../utils/permissio
 
 const today = () => new Date().toISOString().split('T')[0];
 const monthStart = () => new Date().toISOString().slice(0, 7) + '-01';
-const orgFilter = (q, orgId) => (orgId ? q.eq('organization_id', orgId) : q);
 const num = (v) => parseFloat(v || 0);
+
+const orgFilterSQL = (baseSQL, orgId, params) => {
+  let sql = baseSQL;
+  if (orgId) {
+    params.push(orgId);
+    sql += (baseSQL.toLowerCase().includes('where') ? ' AND' : ' WHERE') + ` organization_id = $${params.length}`;
+  }
+  return sql;
+};
 
 const REPORTS = {
   revenue: {
@@ -16,11 +24,16 @@ const REPORTS = {
     build: async ({ db, orgId, args }) => {
       const from = args.date_from || monthStart();
       const to   = args.date_to   || today();
-      const { data } = await orgFilter(db.from('invoices')
-        .select('total_amount, paid_amount, status, invoice_type')
-        .gte('created_at', `${from}T00:00:00`).lte('created_at', `${to}T23:59:59`), orgId);
+      const params = [`${from}T00:00:00`, `${to}T23:59:59`];
+      const sql = orgFilterSQL(
+        'SELECT total_amount, paid_amount, status, invoice_type FROM invoices WHERE created_at >= $1 AND created_at <= $2',
+        orgId,
+        params
+      );
+      const res = await db.query(sql, params);
+      const data = res.rows || [];
       const g = {};
-      (data || []).forEach(i => {
+      data.forEach(i => {
         const k = i.invoice_type || 'other';
         if (!g[k]) g[k] = { type: k, total: 0, paid: 0, pending: 0, count: 0 };
         g[k].total += num(i.total_amount); g[k].paid += num(i.paid_amount);
@@ -31,7 +44,7 @@ const REPORTS = {
         title: `Revenue Report (${from} to ${to})`,
         columns: [{ key: 'type', label: 'Invoice Type' }, { key: 'count', label: 'Invoices' }, { key: 'total', label: 'Total (₹)' }, { key: 'paid', label: 'Collected (₹)' }, { key: 'pending', label: 'Pending (₹)' }],
         rows,
-        summary: `Total revenue ₹${(data || []).reduce((s, i) => s + num(i.total_amount), 0).toFixed(2)} across ${(data || []).length} invoices.`,
+        summary: `Total revenue ₹${data.reduce((s, i) => s + num(i.total_amount), 0).toFixed(2)} across ${data.length} invoices.`,
       };
     },
   },
@@ -40,14 +53,17 @@ const REPORTS = {
     label: 'Attendance Report', module: 'hrms', action: 'view',
     build: async ({ db, orgId, args }) => {
       const date = args.date_from || today();
-      const { data } = await orgFilter(db.from('attendance_logs').select('status').eq('date', date), orgId);
+      const params = [date];
+      const sql = orgFilterSQL('SELECT status FROM attendance_logs WHERE date = $1', orgId, params);
+      const res = await db.query(sql, params);
+      const data = res.rows || [];
       const c = {};
-      (data || []).forEach(r => { const k = r.status || 'unknown'; c[k] = (c[k] || 0) + 1; });
+      data.forEach(r => { const k = r.status || 'unknown'; c[k] = (c[k] || 0) + 1; });
       return {
         title: `Attendance Report (${date})`,
         columns: [{ key: 'status', label: 'Status' }, { key: 'count', label: 'Count' }],
         rows: Object.entries(c).map(([status, count]) => ({ status, count })),
-        summary: `${(data || []).length} attendance records marked on ${date}.`,
+        summary: `${data.length} attendance records marked on ${date}.`,
       };
     },
   },
@@ -55,9 +71,11 @@ const REPORTS = {
   inventory_status: {
     label: 'Inventory Status Report', module: 'pharmacy', action: 'view',
     build: async ({ db, orgId }) => {
-      const { data } = await orgFilter(db.from('pharmacy_inventory')
-        .select('medicine_name, current_stock, reorder_level').eq('is_active', true), orgId);
-      const rows = (data || []).filter(m => m.reorder_level != null && num(m.current_stock) <= num(m.reorder_level))
+      const params = [];
+      const sql = orgFilterSQL('SELECT medicine_name, current_stock, reorder_level FROM pharmacy_inventory WHERE is_active = true', orgId, params);
+      const res = await db.query(sql, params);
+      const data = res.rows || [];
+      const rows = data.filter(m => m.reorder_level != null && num(m.current_stock) <= num(m.reorder_level))
         .map(m => ({ medicine: m.medicine_name, current_stock: m.current_stock, reorder_level: m.reorder_level }));
       return {
         title: 'Inventory Status Report — Low Stock',
@@ -73,17 +91,18 @@ const REPORTS = {
     build: async ({ db, orgId, args }) => {
       const to = args.date_to || today();
       const from = args.date_from || new Date(Date.now() - 30 * 864e5).toISOString().split('T')[0];
-      const { data: consults } = await orgFilter(db.from('consultations').select('id, doctor_id')
-        .gte('consultation_date', from).lte('consultation_date', to), orgId);
-      const rows0 = consults || [];
+      const params = [from, to];
+      const sql = orgFilterSQL('SELECT id, doctor_id FROM consultations WHERE consultation_date >= $1 AND consultation_date <= $2', orgId, params);
+      const res = await db.query(sql, params);
+      const rows0 = res.rows || [];
       const docIds = [...new Set(rows0.map(c => c.doctor_id).filter(Boolean))];
       const nameMap = {};
       if (docIds.length) {
-        const { data: docs } = await db.from('doctors').select('id, user_id, specialization').in('id', docIds);
-        const userIds = [...new Set((docs || []).map(d => d.user_id).filter(Boolean))];
-        const { data: us } = await db.from('users').select('id, first_name, last_name').in('id', userIds);
-        const um = {}; (us || []).forEach(u => { um[u.id] = `${u.first_name || ''} ${u.last_name || ''}`.trim(); });
-        (docs || []).forEach(d => { nameMap[d.id] = { name: um[d.user_id] || 'Unknown', dept: d.specialization || '—' }; });
+        const docsRes = await db.query('SELECT id, user_id, specialization FROM doctors WHERE id = ANY($1)', [docIds]);
+        const userIds = [...new Set((docsRes.rows || []).map(d => d.user_id).filter(Boolean))];
+        const usersRes = await db.query('SELECT id, first_name, last_name FROM users WHERE id = ANY($1)', [userIds]);
+        const um = {}; (usersRes.rows || []).forEach(u => { um[u.id] = `${u.first_name || ''} ${u.last_name || ''}`.trim(); });
+        (docsRes.rows || []).forEach(d => { nameMap[d.id] = { name: um[d.user_id] || 'Unknown', dept: d.specialization || '—' }; });
       }
       const perf = {};
       rows0.forEach(c => { const k = c.doctor_id || 'x'; if (!perf[k]) perf[k] = { doctor: nameMap[k]?.name || 'Unassigned', department: nameMap[k]?.dept || '—', consultations: 0 }; perf[k].consultations += 1; });
@@ -101,20 +120,21 @@ const REPORTS = {
     build: async ({ db, orgId, args }) => {
       const from = args.date_from || monthStart();
       const to   = args.date_to   || today();
-      const { data } = await orgFilter(db.from('hr_leave_requests')
-        .select('user_id, leave_type, from_date, to_date, status')
-        .gte('from_date', from).lte('from_date', to), orgId);
-      const userIds = [...new Set((data || []).map(l => l.user_id).filter(Boolean))];
+      const params = [from, to];
+      const sql = orgFilterSQL('SELECT user_id, leave_type, from_date, to_date, status FROM hr_leave_requests WHERE from_date >= $1 AND from_date <= $2', orgId, params);
+      const res = await db.query(sql, params);
+      const data = res.rows || [];
+      const userIds = [...new Set(data.map(l => l.user_id).filter(Boolean))];
       const um = {};
       if (userIds.length) {
-        const { data: us } = await db.from('users').select('id, first_name, last_name').in('id', userIds);
-        (us || []).forEach(u => { um[u.id] = `${u.first_name || ''} ${u.last_name || ''}`.trim(); });
+        const usersRes = await db.query('SELECT id, first_name, last_name FROM users WHERE id = ANY($1)', [userIds]);
+        (usersRes.rows || []).forEach(u => { um[u.id] = `${u.first_name || ''} ${u.last_name || ''}`.trim(); });
       }
       return {
         title: `Employee Leave Summary (${from} to ${to})`,
         columns: [{ key: 'employee', label: 'Employee' }, { key: 'leave_type', label: 'Type' }, { key: 'from_date', label: 'From' }, { key: 'to_date', label: 'To' }, { key: 'status', label: 'Status' }],
-        rows: (data || []).map(l => ({ employee: um[l.user_id] || 'Unknown', leave_type: l.leave_type || '—', from_date: l.from_date, to_date: l.to_date, status: l.status })),
-        summary: `${(data || []).length} leave request(s) in the period.`,
+        rows: data.map(l => ({ employee: um[l.user_id] || 'Unknown', leave_type: l.leave_type || '—', from_date: l.from_date, to_date: l.to_date, status: l.status })),
+        summary: `${data.length} leave request(s) in the period.`,
       };
     },
   },
@@ -124,26 +144,49 @@ const REPORTS = {
     build: async ({ db, orgId, args }) => {
       const from = args.date_from || monthStart();
       const to   = args.date_to   || today();
-      const [patients, appts, consults, invoices, labOrders] = await Promise.all([
-        orgFilter(db.from('patients').select('id', { count: 'exact', head: true }).eq('is_archived', false).gte('created_at', `${from}T00:00:00`).lte('created_at', `${to}T23:59:59`), orgId),
-        orgFilter(db.from('appointments').select('id', { count: 'exact', head: true }).gte('appointment_date', from).lte('appointment_date', to), orgId),
-        orgFilter(db.from('consultations').select('id', { count: 'exact', head: true }).gte('consultation_date', from).lte('consultation_date', to), orgId),
-        orgFilter(db.from('invoices').select('total_amount, status').gte('created_at', `${from}T00:00:00`).lte('created_at', `${to}T23:59:59`), orgId),
-        orgFilter(db.from('lab_orders').select('id', { count: 'exact', head: true }).gte('ordered_at', `${from}T00:00:00`).lte('ordered_at', `${to}T23:59:59`), orgId),
+      
+      const patientsParams = [`${from}T00:00:00`, `${to}T23:59:59`];
+      const patientsSQL = orgFilterSQL('SELECT COUNT(*) FROM patients WHERE is_archived = false AND created_at >= $1 AND created_at <= $2', orgId, patientsParams);
+      
+      const apptsParams = [from, to];
+      const apptsSQL = orgFilterSQL('SELECT COUNT(*) FROM appointments WHERE appointment_date >= $1 AND appointment_date <= $2', orgId, apptsParams);
+      
+      const consultsParams = [from, to];
+      const consultsSQL = orgFilterSQL('SELECT COUNT(*) FROM consultations WHERE consultation_date >= $1 AND consultation_date <= $2', orgId, consultsParams);
+      
+      const invoicesParams = [`${from}T00:00:00`, `${to}T23:59:59`];
+      const invoicesSQL = orgFilterSQL('SELECT total_amount, status FROM invoices WHERE created_at >= $1 AND created_at <= $2', orgId, invoicesParams);
+      
+      const labParams = [`${from}T00:00:00`, `${to}T23:59:59`];
+      const labSQL = orgFilterSQL('SELECT COUNT(*) FROM lab_orders WHERE ordered_at >= $1 AND ordered_at <= $2', orgId, labParams);
+
+      const [patientsRes, apptsRes, consultsRes, invoicesRes, labOrdersRes] = await Promise.all([
+        db.query(patientsSQL, patientsParams),
+        db.query(apptsSQL, apptsParams),
+        db.query(consultsSQL, consultsParams),
+        db.query(invoicesSQL, invoicesParams),
+        db.query(labSQL, labParams),
       ]);
-      const revenue = (invoices.data || []).filter(i => i.status === 'paid').reduce((s, i) => s + num(i.total_amount), 0);
+
+      const patientsCount = parseInt(patientsRes.rows[0].count || 0);
+      const apptsCount = parseInt(apptsRes.rows[0].count || 0);
+      const consultsCount = parseInt(consultsRes.rows[0].count || 0);
+      const invoicesData = invoicesRes.rows || [];
+      const labOrdersCount = parseInt(labOrdersRes.rows[0].count || 0);
+
+      const revenue = invoicesData.filter(i => i.status === 'paid').reduce((s, i) => s + num(i.total_amount), 0);
       const rows = [
-        { metric: 'New Patient Registrations', value: patients.count || 0 },
-        { metric: 'Total Appointments', value: appts.count || 0 },
-        { metric: 'Completed Consultations', value: consults.count || 0 },
-        { metric: 'Lab Orders', value: labOrders.count || 0 },
+        { metric: 'New Patient Registrations', value: patientsCount },
+        { metric: 'Total Appointments', value: apptsCount },
+        { metric: 'Completed Consultations', value: consultsCount },
+        { metric: 'Lab Orders', value: labOrdersCount },
         { metric: 'Revenue (₹)', value: revenue.toFixed(2) },
       ];
       return {
         title: `Monthly Hospital Report (${from} to ${to})`,
         columns: [{ key: 'metric', label: 'Metric' }, { key: 'value', label: 'Value' }],
         rows,
-        summary: `Period ${from} to ${to}: ${patients.count || 0} new patients, ₹${revenue.toFixed(2)} revenue.`,
+        summary: `Period ${from} to ${to}: ${patientsCount} new patients, ₹${revenue.toFixed(2)} revenue.`,
       };
     },
   },

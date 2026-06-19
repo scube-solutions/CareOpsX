@@ -1,7 +1,7 @@
 const bcrypt = require('bcryptjs');
 const crypto = require('crypto');
 const jwt = require('jsonwebtoken');
-const supabase = require('../utils/supabase'); // always control-plane DB (public schema)
+const db = require('../utils/db');   // pg pool – used for control-plane queries
 const { invalidateOrgCache } = require('../utils/orgClient');
 const { notifyOrgOnboarded, sendInvitationEmail } = require('../utils/notify');
 const {
@@ -16,15 +16,18 @@ const { getPlanDefaults, listPlans, PLAN_KEYS, isManualPlan, loadPlans } = requi
 const FRONTEND_URL = process.env.FRONTEND_URL || 'https://careopsx.com';
 
 // Warm the editable-plan cache from the DB at boot (falls back to defaults).
-loadPlans(supabase).catch(() => {});
-
-// Shorthand for the control plane tables (defaults to public)
-const adminDb = supabase;
+loadPlans(db).catch(() => {});
 
 // Fire-and-forget audit log — never blocks a response, never throws
 const writeAudit = (data) => {
   (async () => {
-    try { await adminDb.from('super_admin_audit_log').insert([data]); } catch {}
+    try {
+      const keys = Object.keys(data);
+      const values = Object.values(data);
+      const cols = keys.join(', ');
+      const placeholders = keys.map((_, i) => `$${i + 1}`).join(', ');
+      await db.query(`INSERT INTO super_admin_audit_log (${cols}) VALUES (${placeholders})`, values);
+    } catch {}
   })();
 };
 
@@ -37,21 +40,19 @@ const buildSlug = (value) =>
 
 const getOrganizations = async (req, res) => {
   try {
-    const { data: organizations, error } = await adminDb.from('organizations').select('*').order('created_at', { ascending: false });
-    if (error) throw error;
+    const orgRes = await db.query(`SELECT * FROM organizations ORDER BY created_at DESC`);
+    const organizations = orgRes.rows || [];
 
     const TRIAL_DAYS = 7;
     const dayMid = (d) => { const x = new Date(d); return new Date(x.getFullYear(), x.getMonth(), x.getDate()).getTime(); };
     const todayMid = dayMid(new Date());
 
-    const enriched = await Promise.all((organizations || []).map(async (org) => {
-      const { count: activeUsers } = await supabase
-        .from('users')
-        .select('*', { count: 'exact', head: true })
-        .eq('organization_id', org.id)
-        .eq('is_active', true);
+    const enriched = await Promise.all(organizations.map(async (org) => {
+      const userCountRes = await db.query(
+        `SELECT COUNT(*) FROM users WHERE organization_id = $1 AND is_active = true`,
+        [org.id]
+      );
 
-      // Trial countdown (only meaningful while billing_status === 'trial')
       let trialDaysLeft = null, trialExpired = false;
       if (org.created_at && (org.billing_status === 'trial' || !org.billing_status)) {
         const elapsed = Math.floor((todayMid - dayMid(org.created_at)) / 86400000);
@@ -63,11 +64,11 @@ const getOrganizations = async (req, res) => {
         ...org,
         portal_access: normalizePortalAccess(org.portal_access),
         seat_limits: normalizeSeatLimits(org.seat_limits),
-        active_users: activeUsers || 0,
+        active_users: parseInt(userCountRes.rows[0].count) || 0,
         doctor_seats_used: await countUsersInSeat(org.id, 'doctor'),
-        admin_seats_used: await countUsersInSeat(org.id, 'admin'),
+        admin_seats_used:  await countUsersInSeat(org.id, 'admin'),
         trial_days_left: trialDaysLeft,
-        trial_expired: trialExpired,
+        trial_expired:   trialExpired,
       };
     }));
 
@@ -75,13 +76,13 @@ const getOrganizations = async (req, res) => {
 
     return res.json({
       summary: {
-        total_organizations: enriched.length,
-        active: enriched.filter((org) => org.status === 'active').length,
-        paused: enriched.filter((org) => org.status === 'paused').length,
-        suspended: enriched.filter((org) => org.status === 'suspended').length,
-        trial_expiring_soon: onTrial.filter((o) => o.trial_days_left > 0 && o.trial_days_left <= 2).length,
-        trial_expired: onTrial.filter((o) => o.trial_expired).length,
-        on_trial: onTrial.length,
+        total_organizations:   enriched.length,
+        active:                enriched.filter(o => o.status === 'active').length,
+        paused:                enriched.filter(o => o.status === 'paused').length,
+        suspended:             enriched.filter(o => o.status === 'suspended').length,
+        trial_expiring_soon:   onTrial.filter(o => o.trial_days_left > 0 && o.trial_days_left <= 2).length,
+        trial_expired:         onTrial.filter(o => o.trial_expired).length,
+        on_trial:              onTrial.length,
       },
       organizations: enriched,
     });
@@ -92,20 +93,22 @@ const getOrganizations = async (req, res) => {
 
 const getOrganizationDetail = async (req, res) => {
   try {
-    const { data: organization, error } = await adminDb.from('organizations').select('*').eq('id', req.params.id).single();
-    if (error) throw error;
+    const orgRes = await db.query(`SELECT * FROM organizations WHERE id = $1`, [req.params.id]);
+    if (!orgRes.rows.length) return res.status(404).json({ error: 'Organization not found' });
+    const organization = orgRes.rows[0];
 
-    const { data: users } = await supabase
-      .from('users')
-      .select('id, first_name, last_name, email, role_id, roles, is_active, created_at')
-      .eq('organization_id', req.params.id)
-      .order('created_at', { ascending: false });
-
-    const { data: branches } = await supabase
-      .from('branches')
-      .select('id, branch_name, city, is_active, created_at')
-      .eq('organization_id', req.params.id)
-      .order('created_at', { ascending: false });
+    const [usersRes, branchesRes] = await Promise.all([
+      db.query(
+        `SELECT id, first_name, last_name, email, role_id, roles, is_active, created_at
+         FROM users WHERE organization_id = $1 ORDER BY created_at DESC`,
+        [req.params.id]
+      ),
+      db.query(
+        `SELECT id, branch_name, city, is_active, created_at
+         FROM branches WHERE organization_id = $1 ORDER BY created_at DESC`,
+        [req.params.id]
+      ),
+    ]);
 
     return res.json({
       organization: {
@@ -114,8 +117,8 @@ const getOrganizationDetail = async (req, res) => {
         seat_limits: normalizeSeatLimits(organization.seat_limits),
         feature_flags: normalizeFeatureFlags(organization.feature_flags),
       },
-      users: users || [],
-      branches: branches || [],
+      users: usersRes.rows || [],
+      branches: branchesRes.rows || [],
     });
   } catch (err) {
     return res.status(500).json({ error: err.message });
@@ -125,54 +128,34 @@ const getOrganizationDetail = async (req, res) => {
 const createOrganization = async (req, res) => {
   try {
     const {
-      organization_name,
-      organization_code,
-      slug,
-      contact_name,
-      contact_email,
-      contact_phone,
-      seat_limits,
-      portal_access,
-      feature_flags,
-      plan,
-      billing_status,
-      payment_status,
-      notes,
-      contract_start,
-      contract_end,
-      admin_user,
-      // Tenant DB credentials (optional — leave null to share control-plane DB)
-      tenant_db_url,
-      tenant_db_key,
+      organization_name, organization_code, slug, contact_name, contact_email, contact_phone,
+      seat_limits, portal_access, feature_flags, plan, billing_status, payment_status,
+      notes, contract_start, contract_end, admin_user,
+      tenant_db_url, tenant_db_key,
     } = req.body;
 
     if (!organization_name?.trim()) return res.status(400).json({ error: 'organization_name is required' });
 
-    // Validate the admin email FIRST so we never create an orphan org if it clashes.
     const wantsAdmin = admin_user?.email && admin_user?.first_name && admin_user?.last_name;
     if (wantsAdmin) {
-      const { data: existing } = await supabase.from('users').select('id').ilike('email', admin_user.email).maybeSingle();
-      if (existing) return res.status(409).json({ error: 'Admin email already exists. Choose a different email.' });
+      const dupRes = await db.query(`SELECT id FROM users WHERE LOWER(email) = LOWER($1) LIMIT 1`, [admin_user.email]);
+      if (dupRes.rows.length) return res.status(409).json({ error: 'Admin email already exists. Choose a different email.' });
     }
 
-    // Apply subscription-plan defaults (selecting a plan sets access + features);
-    // explicit values in the request still win.
-    await loadPlans(adminDb);
+    await loadPlans(db);
     const planKey = (plan || 'trial').toLowerCase();
     const planDefaults = getPlanDefaults(planKey) || getPlanDefaults('trial');
-    // Non-custom plans FORCE their bundle (no manual override). Only Enterprise
-    // (custom) accepts hand-picked portals / seats / features.
     const manual = isManualPlan(planKey);
     const finalPortalAccess = normalizePortalAccess(manual ? (portal_access || planDefaults.portal_access) : planDefaults.portal_access);
     const finalSeatLimits   = normalizeSeatLimits(manual ? (seat_limits || planDefaults.seat_limits) : planDefaults.seat_limits);
     const finalFeatureFlags = normalizeFeatureFlags(manual ? (feature_flags || planDefaults.feature_flags) : planDefaults.feature_flags);
 
-    // Auto-generate org code as ORG-1, ORG-2 … (next available serial)
+    // Auto-generate org code
     let finalCode = (organization_code || '').trim();
     if (!finalCode) {
-      const { data: allOrgs } = await adminDb.from('organizations').select('organization_code');
+      const codesRes = await db.query(`SELECT organization_code FROM organizations`);
       const usedNums = new Set(
-        (allOrgs || [])
+        (codesRes.rows || [])
           .map(o => { const m = (o.organization_code || '').match(/^ORG-(\d+)$/i); return m ? parseInt(m[1]) : null; })
           .filter(Boolean)
       );
@@ -181,78 +164,62 @@ const createOrganization = async (req, res) => {
       finalCode = `ORG-${next}`;
     }
 
-    // Auto-generate slug from org name, ensure uniqueness by appending number if taken
+    // Auto-generate slug
     let baseSlug = buildSlug(slug || organization_name);
     let finalSlug = baseSlug;
-    const { data: existingSlugs } = await adminDb.from('organizations').select('slug');
-    const slugSet = new Set((existingSlugs || []).map(o => o.slug));
+    const slugRes = await db.query(`SELECT slug FROM organizations`);
+    const slugSet = new Set((slugRes.rows || []).map(o => o.slug));
     if (slugSet.has(finalSlug)) {
       let n = 2;
       while (slugSet.has(`${baseSlug}-${n}`)) n++;
       finalSlug = `${baseSlug}-${n}`;
     }
 
-    const { data: organization, error } = await adminDb
-      .from('organizations')
-      .insert([{
-        organization_name: organization_name.trim(),
-        organization_code: finalCode,
-        slug: finalSlug,
-        contact_name: contact_name || null,
-        contact_email: contact_email || null,
-        contact_phone: contact_phone || null,
-        plan: planKey,
-        seat_limits: finalSeatLimits,
-        portal_access: finalPortalAccess,
-        feature_flags: finalFeatureFlags,
-        billing_status: billing_status || 'trial',
-        payment_status: payment_status || 'pending',
-        notes: notes || null,
-        contract_start: contract_start || null,
-        contract_end: contract_end || null,
-        tenant_db_url: tenant_db_url || null,
-        tenant_db_key: tenant_db_key || null,
-        created_by: req.user.id,
-      }])
-      .select('*')
-      .single();
-    if (error) throw error;
+    const orgInsertRes = await db.query(
+      `INSERT INTO organizations
+         (organization_name, organization_code, slug, contact_name, contact_email, contact_phone,
+          plan, seat_limits, portal_access, feature_flags, billing_status, payment_status,
+          notes, contract_start, contract_end, tenant_db_url, tenant_db_key, created_by)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18)
+       RETURNING *`,
+      [
+        organization_name.trim(), finalCode, finalSlug,
+        contact_name || null, contact_email || null, contact_phone || null,
+        planKey, finalSeatLimits, finalPortalAccess, finalFeatureFlags,
+        billing_status || 'trial', payment_status || 'pending',
+        notes || null, contract_start || null, contract_end || null,
+        tenant_db_url || null, tenant_db_key || null, req.user.id
+      ]
+    );
+    const organization = orgInsertRes.rows[0];
 
     let createdAdmin = null;
     if (wantsAdmin) {
-      // Invitation-based onboarding: no plaintext password. The admin sets their
-      // own password via the activation link. If a password IS supplied, honour it.
-      const usePassword = !!admin_user.password;
+      const usePassword  = !!admin_user.password;
       const password_hash = await bcrypt.hash(usePassword ? admin_user.password : crypto.randomBytes(24).toString('hex'), 10);
-      const inviteToken  = usePassword ? null : crypto.randomBytes(32).toString('hex');
-      const inviteExpiry = usePassword ? null : new Date(Date.now() + 48 * 60 * 60 * 1000).toISOString();
+      const inviteToken   = usePassword ? null : crypto.randomBytes(32).toString('hex');
+      const inviteExpiry  = usePassword ? null : new Date(Date.now() + 48 * 60 * 60 * 1000).toISOString();
 
-      const { data: user, error: userError } = await supabase
-        .from('users')
-        .insert([{
-          first_name: admin_user.first_name,
-          last_name: admin_user.last_name,
-          email: admin_user.email,
-          phone: admin_user.phone || null,
-          password_hash,
-          role_id: 1,
-          roles: [1],
-          organization_id: organization.id,
-          is_active: usePassword,
-          email_verified: usePassword,
-          account_status: usePassword ? 'active' : 'pending_activation',
-          invite_status: usePassword ? 'active' : 'invited',
-          invite_token: inviteToken,
-          invite_token_expiry: inviteExpiry,
-          created_by: req.user.id,
-        }])
-        .select('id, first_name, last_name, email, role_id, organization_id, invite_status')
-        .single();
-      if (userError) throw userError;
-      createdAdmin = user;
+      const userInsertRes = await db.query(
+        `INSERT INTO users
+           (first_name, last_name, email, phone, password_hash, role_id, roles,
+            organization_id, is_active, email_verified, account_status, invite_status,
+            invite_token, invite_token_expiry, created_by)
+         VALUES ($1,$2,$3,$4,$5,1,ARRAY[1],$6,$7,$7,$8,$9,$10,$11,$12)
+         RETURNING id, first_name, last_name, email, role_id, organization_id, invite_status`,
+        [
+          admin_user.first_name, admin_user.last_name, admin_user.email,
+          admin_user.phone || null, password_hash,
+          organization.id,
+          usePassword, usePassword,
+          usePassword ? 'active' : 'pending_activation',
+          usePassword ? 'active' : 'invited',
+          inviteToken, inviteExpiry, req.user.id
+        ]
+      );
+      createdAdmin = userInsertRes.rows[0];
 
       if (usePassword) {
-        // Legacy path: send credentials.
         const enabledPortals = Object.entries(finalPortalAccess).filter(([, v]) => v === true).map(([k]) => k.charAt(0).toUpperCase() + k.slice(1));
         notifyOrgOnboarded({
           adminEmail: createdAdmin.email,
@@ -264,7 +231,6 @@ const createOrganization = async (req, res) => {
           password:   admin_user.password,
         }).catch(() => {});
       } else {
-        // Preferred path: send an activation invite (admin sets own password).
         const url = `${FRONTEND_URL}/activate?token=${inviteToken}`;
         sendInvitationEmail(createdAdmin.email, `${admin_user.first_name} ${admin_user.last_name}`.trim(), url, organization.organization_name, 'Hospital Admin').catch(() => {});
       }
@@ -285,14 +251,11 @@ const UPDATABLE_ORG_FIELDS = [
 
 const updateOrganization = async (req, res) => {
   try {
-    // Whitelist — never let the client set id/created_by/status/etc. via mass-assignment.
     const payload = { updated_by: req.user.id, updated_at: new Date().toISOString() };
     UPDATABLE_ORG_FIELDS.forEach(k => { if (req.body[k] !== undefined) payload[k] = req.body[k]; });
 
-    // Plan governs access. Non-custom plans FORCE their bundle (manual values
-    // ignored). Enterprise (custom) keeps whatever the super admin sends.
     if (payload.plan !== undefined) {
-      await loadPlans(adminDb);
+      await loadPlans(db);
       const d = getPlanDefaults(payload.plan);
       if (d && !isManualPlan(payload.plan)) {
         payload.portal_access = d.portal_access;
@@ -304,13 +267,22 @@ const updateOrganization = async (req, res) => {
     if (payload.seat_limits)   payload.seat_limits   = normalizeSeatLimits(payload.seat_limits);
     if (payload.feature_flags) payload.feature_flags = normalizeFeatureFlags(payload.feature_flags);
 
-    const { data, error } = await adminDb.from('organizations').update(payload).eq('id', req.params.id).select('*').single();
-    if (error) throw error;
-    // If DB credentials changed, flush the cached client so next request re-resolves
+    const keys = Object.keys(payload);
+    const values = Object.values(payload);
+    const setClauses = keys.map((k, i) => `${k} = $${i + 1}`).join(', ');
+    values.push(req.params.id);
+    const idParam = values.length;
+
+    const result = await db.query(
+      `UPDATE organizations SET ${setClauses} WHERE id = $${idParam} RETURNING *`,
+      values
+    );
+    if (!result.rows.length) return res.status(404).json({ error: 'Organization not found' });
+
     if (payload.tenant_db_url !== undefined || payload.tenant_db_key !== undefined) {
       invalidateOrgCache(Number(req.params.id));
     }
-    return res.json({ organization: data });
+    return res.json({ organization: result.rows[0] });
   } catch (err) {
     return res.status(500).json({ error: err.message });
   }
@@ -323,17 +295,21 @@ const updateOrganizationStatus = async (req, res) => {
       return res.status(400).json({ error: 'Invalid status' });
     }
 
-    const payload = {
-      status,
-      updated_by: req.user.id,
-      updated_at: new Date().toISOString(),
-    };
-    if (status === 'paused') payload.paused_at = new Date().toISOString();
-    if (status === 'suspended') payload.suspended_at = new Date().toISOString();
+    const updates = { status, updated_by: req.user.id, updated_at: new Date().toISOString() };
+    if (status === 'paused')    updates.paused_at    = new Date().toISOString();
+    if (status === 'suspended') updates.suspended_at = new Date().toISOString();
 
-    const { data, error } = await adminDb.from('organizations').update(payload).eq('id', req.params.id).select('*').single();
-    if (error) throw error;
-    return res.json({ organization: data });
+    const keys = Object.keys(updates);
+    const values = Object.values(updates);
+    const setClauses = keys.map((k, i) => `${k} = $${i + 1}`).join(', ');
+    values.push(req.params.id);
+
+    const result = await db.query(
+      `UPDATE organizations SET ${setClauses} WHERE id = $${values.length} RETURNING *`,
+      values
+    );
+    if (!result.rows.length) return res.status(404).json({ error: 'Organization not found' });
+    return res.json({ organization: result.rows[0] });
   } catch (err) {
     return res.status(500).json({ error: err.message });
   }
@@ -342,34 +318,26 @@ const updateOrganizationStatus = async (req, res) => {
 const impersonateOrganization = async (req, res) => {
   try {
     const { target_role_id = 1 } = req.body || {};
-    const { data: organization, error } = await adminDb.from('organizations').select('*').eq('id', req.params.id).single();
-    if (error) throw error;
+    const orgRes = await db.query(`SELECT * FROM organizations WHERE id = $1`, [req.params.id]);
+    if (!orgRes.rows.length) return res.status(404).json({ error: 'Organization not found' });
+    const organization = orgRes.rows[0];
 
     const token = jwt.sign(
       {
-        id: req.user.id,
-        email: req.user.email,
-        role_id: target_role_id,
-        roles: [target_role_id, SUPER_ADMIN_ROLE],
+        id: req.user.id, email: req.user.email,
+        role_id: target_role_id, roles: [target_role_id, SUPER_ADMIN_ROLE],
         original_role_id: SUPER_ADMIN_ROLE,
-        organization_id: organization.id,
-        organization_name: organization.organization_name,
+        organization_id: organization.id, organization_name: organization.organization_name,
         is_impersonating: true,
       },
       process.env.JWT_SECRET,
       { expiresIn: '12h' }
     );
 
-    // Audit log: record every impersonation session (fire-and-forget)
     writeAudit({
-      admin_user_id:  req.user.id,
-      action:         'IMPERSONATE_ORG',
-      target_org_id:  organization.id,
-      target_role_id,
-      details: {
-        organization_name: organization.organization_name,
-        admin_email:       req.user.email,
-      },
+      admin_user_id: req.user.id, action: 'IMPERSONATE_ORG',
+      target_org_id: organization.id, target_role_id,
+      details: { organization_name: organization.organization_name, admin_email: req.user.email },
       ip_address: req.headers['x-forwarded-for'] || req.socket?.remoteAddress || null,
       created_at: new Date().toISOString(),
     });
@@ -377,13 +345,10 @@ const impersonateOrganization = async (req, res) => {
     return res.json({
       token,
       user: {
-        id: req.user.id,
-        email: req.user.email,
-        role_id: target_role_id,
-        roles: [target_role_id, SUPER_ADMIN_ROLE],
+        id: req.user.id, email: req.user.email,
+        role_id: target_role_id, roles: [target_role_id, SUPER_ADMIN_ROLE],
         original_role_id: SUPER_ADMIN_ROLE,
-        organization_id: organization.id,
-        organization_name: organization.organization_name,
+        organization_id: organization.id, organization_name: organization.organization_name,
         is_impersonating: true,
       },
     });
@@ -395,9 +360,9 @@ const impersonateOrganization = async (req, res) => {
 // ── Get next available ORG-N code ────────────────────────────────────────────
 const getNextOrgCode = async (req, res) => {
   try {
-    const { data: allOrgs } = await adminDb.from('organizations').select('organization_code');
+    const codesRes = await db.query(`SELECT organization_code FROM organizations`);
     const usedNums = new Set(
-      (allOrgs || [])
+      (codesRes.rows || [])
         .map(o => { const m = (o.organization_code || '').match(/^ORG-(\d+)$/i); return m ? parseInt(m[1]) : null; })
         .filter(Boolean)
     );
@@ -414,22 +379,18 @@ const resetUserPassword = async (req, res) => {
   try {
     const { user_id, new_password } = req.body;
     if (!user_id || !new_password) return res.status(400).json({ error: 'user_id and new_password required' });
-    if (new_password.length < 8) return res.status(400).json({ error: 'Password must be at least 8 characters' });
+    if (new_password.length < 8)  return res.status(400).json({ error: 'Password must be at least 8 characters' });
 
     const password_hash = await bcrypt.hash(new_password, 10);
-    const { error } = await supabase
-      .from('users')
-      .update({ password_hash, updated_at: new Date().toISOString(), failed_login_attempts: 0, locked_until: null, force_password_change: true })
-      .eq('id', user_id)
-      .eq('organization_id', req.params.id);
-
-    if (error) throw error;
+    await db.query(
+      `UPDATE users SET password_hash=$1, updated_at=$2, failed_login_attempts=0, locked_until=NULL, force_password_change=true
+       WHERE id=$3 AND organization_id=$4`,
+      [password_hash, new Date().toISOString(), user_id, req.params.id]
+    );
 
     writeAudit({
-      admin_user_id: req.user.id,
-      action: 'RESET_USER_PASSWORD',
-      target_org_id: Number(req.params.id),
-      details: { user_id },
+      admin_user_id: req.user.id, action: 'RESET_USER_PASSWORD',
+      target_org_id: Number(req.params.id), details: { user_id },
       ip_address: req.headers['x-forwarded-for'] || req.socket?.remoteAddress || null,
       created_at: new Date().toISOString(),
     });
@@ -444,12 +405,10 @@ const resetUserPassword = async (req, res) => {
 const deleteOrgUser = async (req, res) => {
   try {
     const { userId } = req.params;
-    const { error } = await supabase
-      .from('users')
-      .update({ is_active: false, updated_at: new Date().toISOString() })
-      .eq('id', userId)
-      .eq('organization_id', req.params.id);
-    if (error) throw error;
+    await db.query(
+      `UPDATE users SET is_active=false, updated_at=$1 WHERE id=$2 AND organization_id=$3`,
+      [new Date().toISOString(), userId, req.params.id]
+    );
     return res.json({ message: 'User deactivated' });
   } catch (err) {
     return res.status(500).json({ error: err.message });
@@ -460,17 +419,13 @@ const deleteOrgUser = async (req, res) => {
 const deleteOrganization = async (req, res) => {
   try {
     const orgId = Number(req.params.id);
-    // Mark org as inactive in control plane
-    await adminDb.from('organizations')
-      .update({ status: 'inactive', updated_by: req.user.id, updated_at: new Date().toISOString() })
-      .eq('id', orgId);
-    // Deactivate all users in this org
-    await supabase.from('users').update({ is_active: false }).eq('organization_id', orgId);
-    // Audit log
+    await db.query(
+      `UPDATE organizations SET status='inactive', updated_by=$1, updated_at=$2 WHERE id=$3`,
+      [req.user.id, new Date().toISOString(), orgId]
+    );
+    await db.query(`UPDATE users SET is_active=false WHERE organization_id=$1`, [orgId]);
     writeAudit({
-      admin_user_id: req.user.id,
-      action: 'DELETE_ORG',
-      target_org_id: orgId,
+      admin_user_id: req.user.id, action: 'DELETE_ORG', target_org_id: orgId,
       ip_address: req.headers['x-forwarded-for'] || req.socket?.remoteAddress || null,
       created_at: new Date().toISOString(),
     });
@@ -480,78 +435,104 @@ const deleteOrganization = async (req, res) => {
   }
 };
 
-// ── List subscription plans (for the create/edit UI) ─────────────────────────
+// ── List subscription plans ───────────────────────────────────────────────────
 const getPlans = async (req, res) => {
   try {
-    await loadPlans(adminDb);
+    await loadPlans(db);
     return res.json({ plans: listPlans() });
   } catch (err) { return res.status(500).json({ error: err.message }); }
 };
 
-// ── Edit a plan's structure (portals / seats / features / price) ──────────────
+// ── Edit a plan's structure ───────────────────────────────────────────────────
 const updatePlan = async (req, res) => {
   try {
     const { key } = req.params;
-    await loadPlans(adminDb); // ensure the row exists (seeds defaults if missing)
+    await loadPlans(db);
     const allowed = ['label', 'monthly_price', 'portal_access', 'seat_limits', 'feature_flags', 'sort_order'];
     const payload = { updated_by: req.user.id, updated_at: new Date().toISOString() };
     allowed.forEach(k => { if (req.body[k] !== undefined) payload[k] = req.body[k]; });
-    const { data, error } = await adminDb.from('subscription_plans').update(payload).eq('key', key).select('*').single();
-    if (error) throw error;
-    await loadPlans(adminDb); // refresh cache so new structure applies immediately
+
+    const keys = Object.keys(payload);
+    const values = Object.values(payload);
+    const setClauses = keys.map((k, i) => `${k} = $${i + 1}`).join(', ');
+    values.push(key);
+
+    const result = await db.query(
+      `UPDATE subscription_plans SET ${setClauses} WHERE key = $${values.length} RETURNING *`,
+      values
+    );
+    if (!result.rows.length) return res.status(404).json({ error: 'Plan not found' });
+    await loadPlans(db);
     writeAudit({ admin_user_id: req.user.id, action: 'UPDATE_PLAN', details: { key }, created_at: new Date().toISOString() });
-    return res.json({ message: 'Plan updated', plan: data });
+    return res.json({ message: 'Plan updated', plan: result.rows[0] });
   } catch (err) { return res.status(500).json({ error: err.message }); }
 };
 
-// ── Feature upgrade requests (super admin queue) ──────────────────────────────
+// ── Feature upgrade requests ──────────────────────────────────────────────────
 const getFeatureRequests = async (req, res) => {
   try {
     const { status } = req.query;
-    let q = adminDb.from('feature_requests').select('*').order('created_at', { ascending: false }).limit(200);
-    if (status) q = q.eq('status', status);
-    const { data, error } = await q;
-    if (error) throw error;
-    // Attach org names.
-    const orgIds = [...new Set((data || []).map(r => r.organization_id).filter(Boolean))];
+    const params = [];
+    let whereClause = '';
+    if (status) { params.push(status); whereClause = ` WHERE status = $1`; }
+
+    const result = await db.query(
+      `SELECT * FROM feature_requests${whereClause} ORDER BY created_at DESC LIMIT 200`,
+      params
+    );
+    const data = result.rows || [];
+
+    const orgIds = [...new Set(data.map(r => r.organization_id).filter(Boolean))];
     const nameMap = {};
     if (orgIds.length) {
-      const { data: orgs } = await adminDb.from('organizations').select('id, organization_name, plan').in('id', orgIds);
-      (orgs || []).forEach(o => { nameMap[o.id] = o; });
+      const orgsRes = await db.query(`SELECT id, organization_name, plan FROM organizations WHERE id = ANY($1)`, [orgIds]);
+      (orgsRes.rows || []).forEach(o => { nameMap[o.id] = o; });
     }
-    return res.json({ requests: (data || []).map(r => ({ ...r, organization: nameMap[r.organization_id] || null })) });
+    return res.json({ requests: data.map(r => ({ ...r, organization: nameMap[r.organization_id] || null })) });
   } catch (err) { return res.status(500).json({ error: err.message }); }
 };
 
-// Approve → grant the feature / upgrade the plan. Reject → just close it.
 const handleFeatureRequest = async (req, res) => {
   try {
-    const { action, admin_note } = req.body; // 'approve' | 'reject'
-    const { data: reqRow } = await adminDb.from('feature_requests').select('*').eq('id', req.params.id).maybeSingle();
-    if (!reqRow) return res.status(404).json({ error: 'Request not found' });
+    const { action, admin_note } = req.body;
+    const reqRes = await db.query(`SELECT * FROM feature_requests WHERE id = $1`, [req.params.id]);
+    const reqRow = reqRes.rows[0];
+    if (!reqRow)                    return res.status(404).json({ error: 'Request not found' });
     if (reqRow.status !== 'pending') return res.status(409).json({ error: 'Request already handled' });
 
     if (action === 'approve') {
-      const { data: org } = await adminDb.from('organizations').select('feature_flags, plan').eq('id', reqRow.organization_id).single();
+      const orgRes = await db.query(`SELECT feature_flags, plan FROM organizations WHERE id = $1`, [reqRow.organization_id]);
+      const org = orgRes.rows[0];
       if (reqRow.request_type === 'feature' && reqRow.feature) {
         const flags = normalizeFeatureFlags(org?.feature_flags);
-        flags[reqRow.feature] = true; // grant just this capability on top of the plan
-        await adminDb.from('organizations').update({ feature_flags: flags, updated_by: req.user.id, updated_at: new Date().toISOString() }).eq('id', reqRow.organization_id);
+        flags[reqRow.feature] = true;
+        await db.query(
+          `UPDATE organizations SET feature_flags=$1, updated_by=$2, updated_at=$3 WHERE id=$4`,
+          [flags, req.user.id, new Date().toISOString(), reqRow.organization_id]
+        );
       } else if (reqRow.request_type === 'plan' && reqRow.target_plan) {
-        await loadPlans(adminDb);
+        await loadPlans(db);
         const d = getPlanDefaults(reqRow.target_plan);
         const patch = { plan: reqRow.target_plan, updated_by: req.user.id, updated_at: new Date().toISOString() };
-        if (d && !isManualPlan(reqRow.target_plan)) { patch.portal_access = d.portal_access; patch.seat_limits = d.seat_limits; patch.feature_flags = d.feature_flags; }
-        await adminDb.from('organizations').update(patch).eq('id', reqRow.organization_id);
+        if (d && !isManualPlan(reqRow.target_plan)) {
+          patch.portal_access  = d.portal_access;
+          patch.seat_limits    = d.seat_limits;
+          patch.feature_flags  = d.feature_flags;
+        }
+        const patchKeys = Object.keys(patch);
+        const patchVals = Object.values(patch);
+        const patchSet  = patchKeys.map((k, i) => `${k} = $${i + 1}`).join(', ');
+        patchVals.push(reqRow.organization_id);
+        await db.query(`UPDATE organizations SET ${patchSet} WHERE id = $${patchVals.length}`, patchVals);
       }
     } else if (action !== 'reject') {
       return res.status(400).json({ error: 'action must be approve or reject' });
     }
 
-    await adminDb.from('feature_requests').update({
-      status: action === 'approve' ? 'approved' : 'rejected',
-      admin_note: admin_note || null, handled_by: req.user.id, handled_at: new Date().toISOString(),
-    }).eq('id', req.params.id);
+    await db.query(
+      `UPDATE feature_requests SET status=$1, admin_note=$2, handled_by=$3, handled_at=$4 WHERE id=$5`,
+      [action === 'approve' ? 'approved' : 'rejected', admin_note || null, req.user.id, new Date().toISOString(), req.params.id]
+    );
     writeAudit({ admin_user_id: req.user.id, action: `FEATURE_REQ_${action.toUpperCase()}`, target_org_id: reqRow.organization_id, details: { request_id: req.params.id }, created_at: new Date().toISOString() });
     return res.json({ message: action === 'approve' ? 'Request approved and access granted' : 'Request rejected' });
   } catch (err) { return res.status(500).json({ error: err.message }); }
@@ -562,19 +543,25 @@ const inviteOrgUser = async (req, res) => {
   try {
     const { user_id } = req.body;
     if (!user_id) return res.status(400).json({ error: 'user_id is required' });
-    const { data: user } = await supabase.from('users')
-      .select('id, first_name, last_name, email, invite_status, organization_id')
-      .eq('id', user_id).eq('organization_id', req.params.id).maybeSingle();
+
+    const userRes = await db.query(
+      `SELECT id, first_name, last_name, email, invite_status, organization_id FROM users WHERE id=$1 AND organization_id=$2`,
+      [user_id, req.params.id]
+    );
+    const user = userRes.rows[0];
     if (!user) return res.status(404).json({ error: 'User not found in this organization' });
     if (user.invite_status === 'active') return res.status(409).json({ error: 'This account is already activated' });
 
     const token  = crypto.randomBytes(32).toString('hex');
     const expiry = new Date(Date.now() + 48 * 60 * 60 * 1000).toISOString();
-    await supabase.from('users').update({ invite_token: token, invite_token_expiry: expiry, invite_status: 'invited', account_status: 'pending_activation' }).eq('id', user.id);
+    await db.query(
+      `UPDATE users SET invite_token=$1, invite_token_expiry=$2, invite_status='invited', account_status='pending_activation' WHERE id=$3`,
+      [token, expiry, user.id]
+    );
 
-    const { data: org } = await adminDb.from('organizations').select('organization_name').eq('id', req.params.id).maybeSingle();
-    const url = `${FRONTEND_URL}/activate?token=${token}`;
-    const sent = await sendInvitationEmail(user.email, `${user.first_name} ${user.last_name}`.trim(), url, org?.organization_name, 'Hospital Admin');
+    const orgRes = await db.query(`SELECT organization_name FROM organizations WHERE id=$1`, [req.params.id]);
+    const url  = `${FRONTEND_URL}/activate?token=${token}`;
+    const sent = await sendInvitationEmail(user.email, `${user.first_name} ${user.last_name}`.trim(), url, orgRes.rows[0]?.organization_name, 'Hospital Admin');
     writeAudit({ admin_user_id: req.user.id, action: 'INVITE_ORG_USER', target_org_id: Number(req.params.id), details: { user_id }, created_at: new Date().toISOString() });
     return res.json({ message: sent ? 'Invitation sent' : 'Invitation created — email unavailable, share the link manually.', ...(!sent && process.env.NODE_ENV !== 'production' ? { activate_url: url } : {}) });
   } catch (err) { return res.status(500).json({ error: err.message }); }

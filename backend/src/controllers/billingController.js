@@ -9,21 +9,25 @@ const generateInvoiceNumber = () => {
 const attachPatients = async (rows, idField = 'patient_id', db) => {
   const ids = [...new Set(rows.map(r => r[idField]).filter(Boolean))];
   if (!ids.length) return {};
-  const { data } = await db.from('patients').select('id, first_name, last_name, patient_uid, phone').in('id', ids);
+  const result = await db.query(
+    'SELECT id, first_name, last_name, patient_uid, phone FROM patients WHERE id = ANY($1)',
+    [ids]
+  );
   const map = {};
-  (data || []).forEach(p => { map[p.id] = p; });
+  (result.rows || []).forEach(p => { map[p.id] = p; });
   return map;
 };
 
 const attachDoctorNames = async (rows, idField = 'doctor_id', db) => {
   const ids = [...new Set(rows.map(r => r[idField]).filter(Boolean))];
   if (!ids.length) return {};
-  const { data: doctors } = await db.from('doctors').select('id, user_id').in('id', ids);
-  if (!doctors?.length) return {};
+  const doctorsResult = await db.query('SELECT id, user_id FROM doctors WHERE id = ANY($1)', [ids]);
+  const doctors = doctorsResult.rows || [];
+  if (!doctors.length) return {};
   const userIds = [...new Set(doctors.map(d => d.user_id).filter(Boolean))];
-  const { data: users } = await db.from('users').select('id, first_name, last_name').in('id', userIds);
+  const usersResult = await db.query('SELECT id, first_name, last_name FROM users WHERE id = ANY($1)', [userIds]);
   const userMap = {};
-  (users || []).forEach(u => { userMap[u.id] = u; });
+  (usersResult.rows || []).forEach(u => { userMap[u.id] = u; });
   const nameMap = {};
   doctors.forEach(d => {
     const u = userMap[d.user_id];
@@ -35,37 +39,68 @@ const attachDoctorNames = async (rows, idField = 'doctor_id', db) => {
 // ── Get Invoices ──────────────────────────────────────────────────────────────
 const getInvoices = async (req, res) => {
   try {
-    const supabase = req.db;
+    const db = req.db;
     const { patient_id, status, invoice_type, date_from, date_to, page = 1, limit = 20 } = req.query;
-    const offset = (parseInt(page) - 1) * parseInt(limit);
+    const parsedLimit = parseInt(limit) || 20;
+    const offset = (parseInt(page) - 1) * parsedLimit;
     const organizationId = getUserOrganizationId(req);
 
-    let query = supabase.from('invoices')
-      .select('*', { count: 'exact' })
-      .order('created_at', { ascending: false })
-      .range(offset, offset + parseInt(limit) - 1);
+    let queryText = 'SELECT * FROM invoices';
+    let countQueryText = 'SELECT COUNT(*)::int FROM invoices';
+    const conditions = [];
+    const params = [];
 
-    if (organizationId) query = query.eq('organization_id', organizationId);
+    if (organizationId) {
+      params.push(organizationId);
+      conditions.push(`organization_id = $${params.length}`);
+    }
 
-    if (patient_id) query = query.eq('patient_id', patient_id);
-    if (status) query = query.eq('status', status);
-    if (invoice_type) query = query.eq('invoice_type', invoice_type);
-    if (date_from) query = query.gte('created_at', `${date_from}T00:00:00`);
-    if (date_to) query = query.lte('created_at', `${date_to}T23:59:59`);
+    if (patient_id) {
+      params.push(patient_id);
+      conditions.push(`patient_id = $${params.length}`);
+    }
+    if (status) {
+      params.push(status);
+      conditions.push(`status = $${params.length}`);
+    }
+    if (invoice_type) {
+      params.push(invoice_type);
+      conditions.push(`invoice_type = $${params.length}`);
+    }
+    if (date_from) {
+      params.push(`${date_from}T00:00:00`);
+      conditions.push(`created_at >= $${params.length}`);
+    }
+    if (date_to) {
+      params.push(`${date_to}T23:59:59`);
+      conditions.push(`created_at <= $${params.length}`);
+    }
 
-    const { data, error, count } = await query;
-    if (error) throw error;
+    if (conditions.length > 0) {
+      const whereClause = ' WHERE ' + conditions.join(' AND ');
+      queryText += whereClause;
+      countQueryText += whereClause;
+    }
 
-    const patientMap = await attachPatients(data || [], supabase);
-    const doctorMap = await attachDoctorNames(data || [], supabase);
+    const countResult = await db.query(countQueryText, params);
+    const count = countResult.rows[0].count;
 
-    const invoices = (data || []).map(inv => ({
+    queryText += ' ORDER BY created_at DESC LIMIT $' + (params.length + 1) + ' OFFSET $' + (params.length + 2);
+    params.push(parsedLimit, offset);
+
+    const result = await db.query(queryText, params);
+    const data = result.rows || [];
+
+    const patientMap = await attachPatients(data, 'patient_id', db);
+    const doctorMap = await attachDoctorNames(data, 'doctor_id', db);
+
+    const invoices = data.map(inv => ({
       ...inv,
       patients: patientMap[inv.patient_id] || null,
       doctors: inv.doctor_id ? { users: doctorMap[inv.doctor_id] || null } : null,
     }));
 
-    return res.json({ invoices, total: count, page: parseInt(page), limit: parseInt(limit) });
+    return res.json({ invoices, total: count, page: parseInt(page), limit: parsedLimit });
   } catch (err) {
     return res.status(500).json({ error: err.message });
   }
@@ -74,15 +109,30 @@ const getInvoices = async (req, res) => {
 // ── Get Invoice By ID ─────────────────────────────────────────────────────────
 const getInvoiceById = async (req, res) => {
   try {
-    const supabase = req.db;
+    const db = req.db;
     const organizationId = getUserOrganizationId(req);
-    let invQuery = supabase.from('invoices').select('*, invoice_items(*), payments(*)').eq('id', req.params.id);
-    if (organizationId) invQuery = invQuery.eq('organization_id', organizationId);
-    const { data, error } = await invQuery.single();
-    if (error || !data) return res.status(404).json({ error: 'Invoice not found' });
+    
+    let queryText = 'SELECT * FROM invoices WHERE id = $1';
+    const params = [req.params.id];
+    if (organizationId) {
+      params.push(organizationId);
+      queryText += ' AND organization_id = $2';
+    }
+    queryText += ' LIMIT 1';
 
-    const patientMap = await attachPatients([data], supabase);
-    const doctorMap = await attachDoctorNames([data], supabase);
+    const result = await db.query(queryText, params);
+    const data = result.rows[0];
+    if (!data) return res.status(404).json({ error: 'Invoice not found' });
+
+    const [itemsResult, paymentsResult] = await Promise.all([
+      db.query('SELECT * FROM invoice_items WHERE invoice_id = $1', [data.id]),
+      db.query('SELECT * FROM payments WHERE invoice_id = $1', [data.id])
+    ]);
+    data.invoice_items = itemsResult.rows || [];
+    data.payments = paymentsResult.rows || [];
+
+    const patientMap = await attachPatients([data], 'patient_id', db);
+    const doctorMap = await attachDoctorNames([data], 'doctor_id', db);
 
     return res.json({
       invoice: {
@@ -99,7 +149,7 @@ const getInvoiceById = async (req, res) => {
 // ── Create Invoice ────────────────────────────────────────────────────────────
 const createInvoice = async (req, res) => {
   try {
-    const supabase = req.db;
+    const db = req.db;
     const {
       patient_id, doctor_id, appointment_id, consultation_id, invoice_type,
       items, discount, tax_percent,
@@ -108,7 +158,6 @@ const createInvoice = async (req, res) => {
     } = req.body;
     if (!patient_id) return res.status(400).json({ error: 'patient_id is required' });
 
-    // Accept either items[] array or flat fee fields from the billing UI
     let itemList = items || [];
     if (!itemList.length) {
       if (Number(consultation_fee) > 0) itemList.push({ description: 'Consultation Fee', unit_price: Number(consultation_fee), quantity: 1, item_type: 'consultation' });
@@ -125,52 +174,74 @@ const createInvoice = async (req, res) => {
 
     const organizationId = getUserOrganizationId(req);
     const invoice_number = generateInvoiceNumber();
-    const { data: inv, error: invErr } = await supabase.from('invoices').insert([{
-      invoice_number,
-      patient_id,
-      doctor_id: doctor_id || null,
-      appointment_id: appointment_id || null,
-      consultation_id: consultation_id || null,
-      invoice_type: invoice_type || 'consultation',
-      subtotal,
-      discount: discountAmt,
-      tax_percent: effectiveTaxPct,
-      tax_amount: taxAmt,
-      total_amount: total,
-      paid_amount: 0,
-      balance_amount: total,
-      status: 'pending',
-      notes: notes || null,
-      organization_id: organizationId || null,
-      created_by: req.user.id,
-      created_at: new Date().toISOString()
-    }]).select('*').single();
 
-    if (invErr) throw invErr;
+    const insertResult = await db.query(
+      `INSERT INTO invoices (invoice_number, patient_id, doctor_id, appointment_id, consultation_id, invoice_type, subtotal, discount, tax_percent, tax_amount, total_amount, paid_amount, balance_amount, status, notes, organization_id, created_by, created_at)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18)
+       RETURNING *`,
+      [
+        invoice_number,
+        patient_id,
+        doctor_id || null,
+        appointment_id || null,
+        consultation_id || null,
+        invoice_type || 'consultation',
+        subtotal,
+        discountAmt,
+        effectiveTaxPct,
+        taxAmt,
+        total,
+        0,
+        total,
+        'pending',
+        notes || null,
+        organizationId || null,
+        req.user.id,
+        new Date().toISOString()
+      ]
+    );
+    const inv = insertResult.rows[0];
 
     if (itemList.length) {
-      const rows = itemList.map(i => ({
-        invoice_id: inv.id,
-        description: i.description,
-        quantity: i.quantity || 1,
-        unit_price: i.unit_price,
-        total_price: Number(i.unit_price) * Number(i.quantity || 1),
-        item_type: i.item_type || 'service'
-      }));
-      await supabase.from('invoice_items').insert(rows);
+      const rows = [];
+      const values = [];
+      itemList.forEach((i, idx) => {
+        const baseIdx = idx * 6;
+        rows.push(`($${baseIdx + 1}, $${baseIdx + 2}, $${baseIdx + 3}, $${baseIdx + 4}, $${baseIdx + 5}, $${baseIdx + 6})`);
+        values.push(
+          inv.id,
+          i.description,
+          i.quantity || 1,
+          i.unit_price,
+          Number(i.unit_price) * Number(i.quantity || 1),
+          i.item_type || 'service'
+        );
+      });
+
+      const itemInsertText = `
+        INSERT INTO invoice_items (invoice_id, description, quantity, unit_price, total_price, item_type)
+        VALUES ${rows.join(', ')}
+      `;
+      await db.query(itemInsertText, values);
     }
 
-    // If payment_mode is not 'later', immediately record full payment
     if (payment_mode && payment_mode !== 'later' && total > 0) {
-      await supabase.from('payments').insert([{
-        invoice_id: inv.id,
-        amount: total,
-        payment_mode,
-        payment_date: new Date().toISOString(),
-        created_by: req.user.id,
-        created_at: new Date().toISOString()
-      }]);
-      await supabase.from('invoices').update({ paid_amount: total, balance_amount: 0, status: 'paid' }).eq('id', inv.id);
+      await db.query(
+        `INSERT INTO payments (invoice_id, amount, payment_mode, payment_date, created_by, created_at)
+         VALUES ($1, $2, $3, $4, $5, $6)`,
+        [
+          inv.id,
+          total,
+          payment_mode,
+          new Date().toISOString(),
+          req.user.id,
+          new Date().toISOString()
+        ]
+      );
+      await db.query(
+        "UPDATE invoices SET paid_amount = $1, balance_amount = 0, status = 'paid' WHERE id = $2",
+        [total, inv.id]
+      );
       inv.status = 'paid';
       inv.paid_amount = total;
     }
@@ -185,34 +256,45 @@ const createInvoice = async (req, res) => {
 // ── Record Payment ────────────────────────────────────────────────────────────
 const recordPayment = async (req, res) => {
   try {
-    const supabase = req.db;
+    const db = req.db;
     const { invoice_id, amount, payment_mode, payment_date, notes } = req.body;
     if (!invoice_id) return res.status(400).json({ error: 'invoice_id is required' });
 
-    const { data: inv } = await supabase.from('invoices').select('total_amount, paid_amount, balance_amount, status').eq('id', invoice_id).single();
+    const invResult = await db.query(
+      'SELECT total_amount, paid_amount, balance_amount, status FROM invoices WHERE id = $1 LIMIT 1',
+      [invoice_id]
+    );
+    const inv = invResult.rows[0];
     if (!inv) return res.status(404).json({ error: 'Invoice not found' });
 
     const payAmount = amount !== undefined ? parseFloat(amount) : parseFloat(inv.balance_amount || inv.total_amount);
 
     const organizationId = getUserOrganizationId(req);
-    const { data: pay, error: payErr } = await supabase.from('payments').insert([{
-      invoice_id,
-      amount: payAmount,
-      payment_mode: payment_mode || 'cash',
-      payment_date: payment_date || new Date().toISOString(),
-      notes: notes || null,
-      organization_id: organizationId || null,
-      created_by: req.user.id,
-      created_at: new Date().toISOString()
-    }]).select('*').single();
-
-    if (payErr) throw payErr;
+    const payResult = await db.query(
+      `INSERT INTO payments (invoice_id, amount, payment_mode, payment_date, notes, organization_id, created_by, created_at)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+       RETURNING *`,
+      [
+        invoice_id,
+        payAmount,
+        payment_mode || 'cash',
+        payment_date || new Date().toISOString(),
+        notes || null,
+        organizationId || null,
+        req.user.id,
+        new Date().toISOString()
+      ]
+    );
+    const pay = payResult.rows[0];
 
     const newPaid = parseFloat(inv.paid_amount || 0) + payAmount;
     const newBalance = parseFloat(inv.total_amount) - newPaid;
     const newStatus = newBalance <= 0 ? 'paid' : newPaid > 0 ? 'partial' : 'pending';
 
-    await supabase.from('invoices').update({ paid_amount: newPaid, balance_amount: Math.max(0, newBalance), status: newStatus, updated_by: req.user.id }).eq('id', invoice_id);
+    await db.query(
+      'UPDATE invoices SET paid_amount = $1, balance_amount = $2, status = $3, updated_by = $4 WHERE id = $5',
+      [newPaid, Math.max(0, newBalance), newStatus, req.user.id, invoice_id]
+    );
 
     await auditLog({ user_id: req.user.id, role_id: req.user.role_id, organization_id: req.user.organization_id || null, action: 'RECORD_PAYMENT', module: 'Billing', entity_type: 'payment', entity_id: pay.id, new_data: { invoice_id, amount: payAmount } });
     return res.status(201).json({ message: 'Payment recorded', payment: pay, invoice_status: newStatus });
@@ -224,24 +306,31 @@ const recordPayment = async (req, res) => {
 // ── Process Refund ────────────────────────────────────────────────────────────
 const processRefund = async (req, res) => {
   try {
-    const supabase = req.db;
+    const db = req.db;
     const { invoice_id, refund_amount, refund_reason, payment_mode } = req.body;
     if (!invoice_id || !refund_amount || !refund_reason) return res.status(400).json({ error: 'invoice_id, refund_amount, and refund_reason required' });
 
-    const { data: inv } = await supabase.from('invoices').select('paid_amount, total_amount, status').eq('id', invoice_id).single();
+    const invResult = await db.query('SELECT paid_amount, total_amount, status FROM invoices WHERE id = $1 LIMIT 1', [invoice_id]);
+    const inv = invResult.rows[0];
     if (!inv) return res.status(404).json({ error: 'Invoice not found' });
     if (parseFloat(refund_amount) > parseFloat(inv.paid_amount)) return res.status(400).json({ error: 'Refund amount exceeds paid amount' });
 
-    const { data, error } = await supabase.from('invoices').update({
-      refund_amount: parseFloat(refund_amount),
-      refund_reason,
-      refund_payment_mode: payment_mode || 'cash',
-      status: 'refunded',
-      refunded_by: req.user.id,
-      refunded_at: new Date().toISOString()
-    }).eq('id', invoice_id).select('*').single();
+    const updateResult = await db.query(
+      `UPDATE invoices 
+       SET refund_amount = $1, refund_reason = $2, refund_payment_mode = $3, status = 'refunded', refunded_by = $4, refunded_at = $5
+       WHERE id = $6
+       RETURNING *`,
+      [
+        parseFloat(refund_amount),
+        refund_reason,
+        payment_mode || 'cash',
+        req.user.id,
+        new Date().toISOString(),
+        invoice_id
+      ]
+    );
+    const data = updateResult.rows[0];
 
-    if (error) throw error;
     await auditLog({ user_id: req.user.id, role_id: req.user.role_id, organization_id: req.user.organization_id || null, action: 'PROCESS_REFUND', module: 'Billing', entity_type: 'invoice', entity_id: invoice_id, new_data: { refund_amount, refund_reason } });
     return res.json({ message: 'Refund processed', invoice: data });
   } catch (err) {
@@ -252,35 +341,47 @@ const processRefund = async (req, res) => {
 // ── Get Payment Register ──────────────────────────────────────────────────────
 const getPaymentRegister = async (req, res) => {
   try {
-    const supabase = req.db;
+    const db = req.db;
     const { date_from, date_to, payment_mode } = req.query;
     const today = new Date().toISOString().split('T')[0];
     const organizationId = getUserOrganizationId(req);
 
-    let query = supabase.from('payments')
-      .select('*, invoice_id')
-      .order('payment_date', { ascending: false })
-      .gte('payment_date', `${date_from || today}T00:00:00`)
-      .lte('payment_date', `${date_to || today}T23:59:59`);
+    let queryText = 'SELECT *, invoice_id FROM payments';
+    const conditions = [];
+    const params = [];
 
-    if (organizationId) query = query.eq('organization_id', organizationId);
-    if (payment_mode) query = query.eq('payment_mode', payment_mode);
+    params.push(`${date_from || today}T00:00:00`, `${date_to || today}T23:59:59`);
+    conditions.push('payment_date >= $1 AND payment_date <= $2');
 
-    const { data: payments, error } = await query;
-    if (error) throw error;
+    if (organizationId) {
+      params.push(organizationId);
+      conditions.push(`organization_id = $${params.length}`);
+    }
+    if (payment_mode) {
+      params.push(payment_mode);
+      conditions.push(`payment_mode = $${params.length}`);
+    }
 
-    // Attach invoice info separately
-    const invoiceIds = [...new Set((payments || []).map(p => p.invoice_id).filter(Boolean))];
+    if (conditions.length > 0) {
+      queryText += ' WHERE ' + conditions.join(' AND ');
+    }
+    queryText += ' ORDER BY payment_date DESC';
+
+    const paymentsResult = await db.query(queryText, params);
+    const payments = paymentsResult.rows || [];
+
+    const invoiceIds = [...new Set(payments.map(p => p.invoice_id).filter(Boolean))];
     const invoiceMap = {};
     if (invoiceIds.length) {
-      const { data: invs } = await supabase.from('invoices').select('id, invoice_number, invoice_type, total_amount, patient_id').in('id', invoiceIds);
-      const patientMap = await attachPatients(invs || [], supabase);
-      (invs || []).forEach(inv => {
+      const invsResult = await db.query('SELECT id, invoice_number, invoice_type, total_amount, patient_id FROM invoices WHERE id = ANY($1)', [invoiceIds]);
+      const invs = invsResult.rows || [];
+      const patientMap = await attachPatients(invs, 'patient_id', db);
+      invs.forEach(inv => {
         invoiceMap[inv.id] = { ...inv, patients: patientMap[inv.patient_id] || null };
       });
     }
 
-    const result = (payments || []).map(p => ({ ...p, invoices: invoiceMap[p.invoice_id] || null }));
+    const result = payments.map(p => ({ ...p, invoices: invoiceMap[p.invoice_id] || null }));
     const total = result.reduce((sum, p) => sum + parseFloat(p.amount || 0), 0);
     return res.json({ payments: result, total_collected: total });
   } catch (err) {
@@ -291,64 +392,82 @@ const getPaymentRegister = async (req, res) => {
 // ── Reception Payment History (consultation + lab only) ───────────────────────
 const getReceptionPayments = async (req, res) => {
   try {
-    const supabase = req.db;
+    const db = req.db;
     const { patient_id, date_from, date_to, status } = req.query;
     const organizationId = getUserOrganizationId(req);
-    let query = supabase.from('invoices')
-      .select('*')
-      .in('invoice_type', ['consultation', 'lab'])
-      .order('created_at', { ascending: false });
 
-    if (organizationId) query = query.eq('organization_id', organizationId);
+    let queryText = "SELECT * FROM invoices WHERE invoice_type IN ('consultation', 'lab')";
+    const conditions = [];
+    const params = [];
 
-    if (patient_id) query = query.eq('patient_id', patient_id);
-    if (status)     query = query.eq('status', status);
-    if (date_from)  query = query.gte('created_at', date_from);
-    if (date_to)    query = query.lte('created_at', date_to + 'T23:59:59');
+    if (organizationId) {
+      params.push(organizationId);
+      conditions.push(`organization_id = $${params.length}`);
+    }
+    if (patient_id) {
+      params.push(patient_id);
+      conditions.push(`patient_id = $${params.length}`);
+    }
+    if (status) {
+      params.push(status);
+      conditions.push(`status = $${params.length}`);
+    }
+    if (date_from) {
+      params.push(date_from);
+      conditions.push(`created_at >= $${params.length}`);
+    }
+    if (date_to) {
+      params.push(date_to + 'T23:59:59');
+      conditions.push(`created_at <= $${params.length}`);
+    }
 
-    const { data, error } = await query;
-    if (error) throw error;
+    if (conditions.length > 0) {
+      queryText += ' AND ' + conditions.join(' AND ');
+    }
+    queryText += ' ORDER BY created_at DESC';
 
-    const rows = data || [];
+    const result = await db.query(queryText, params);
+    const rows = result.rows || [];
+
     const ids = [...new Set(rows.map(r => r.patient_id).filter(Boolean))];
     const pMap = {};
     if (ids.length) {
-      const { data: pts } = await supabase.from('patients')
-        .select('id, first_name, last_name, patient_uid, phone').in('id', ids);
-      (pts || []).forEach(p => { pMap[p.id] = p; });
+      const ptsResult = await db.query('SELECT id, first_name, last_name, patient_uid, phone FROM patients WHERE id = ANY($1)', [ids]);
+      (ptsResult.rows || []).forEach(p => { pMap[p.id] = p; });
     }
 
     return res.json({
       invoices: rows.map(inv => ({ ...inv, patients: pMap[inv.patient_id] || null })),
     });
-  } catch (err) { return res.status(500).json({ error: err.message }); }
+  } catch (err) {
+    return res.status(500).json({ error: err.message });
+  }
 };
 
 // ── Patient: own billing invoices ─────────────────────────────────────────────
 const getMyInvoices = async (req, res) => {
   try {
-    const supabase = req.db;
-    let { data: patRec } = await supabase.from('patients').select('id').eq('user_id', req.user.id).single();
+    const db = req.db;
+    
+    let patResult = await db.query('SELECT id FROM patients WHERE user_id = $1 LIMIT 1', [req.user.id]);
+    let patRec = patResult.rows[0];
 
-    // Fallback: receptionist-created patients have user_id=null — match by email and link
     if (!patRec && req.user.email) {
-      const { data: byEmail } = await supabase.from('patients').select('id').eq('email', req.user.email).maybeSingle();
+      const byEmailResult = await db.query('SELECT id FROM patients WHERE email = $1 LIMIT 1', [req.user.email]);
+      const byEmail = byEmailResult.rows[0];
       if (byEmail) {
         patRec = byEmail;
-        await supabase.from('patients').update({ user_id: req.user.id }).eq('id', byEmail.id);
+        await db.query('UPDATE patients SET user_id = $1 WHERE id = $2', [req.user.id, byEmail.id]);
       }
     }
 
     if (!patRec) return res.json({ invoices: [] });
 
-    const { data: invoices, error } = await supabase
-      .from('invoices')
-      .select('*')
-      .eq('patient_id', patRec.id)
-      .order('created_at', { ascending: false });
-
-    if (error) throw error;
-    return res.json({ invoices: invoices || [] });
+    const invoicesResult = await db.query(
+      'SELECT * FROM invoices WHERE patient_id = $1 ORDER BY created_at DESC',
+      [patRec.id]
+    );
+    return res.json({ invoices: invoicesResult.rows || [] });
   } catch (err) {
     return res.status(500).json({ error: err.message });
   }
@@ -403,13 +522,13 @@ const verifyRazorpayPayment = async (req, res) => {
       return res.status(400).json({ error: 'Payment signature verification failed' });
     }
 
-    const supabase = require('../utils/supabase');
+    const db = req.db || require('../utils/db');
     const { organizationId } = await require('../utils/organizationAccess').getOrganizationContext(req);
 
-    await supabase
-      .from('organizations')
-      .update({ billing_status: plan, payment_status: 'paid' })
-      .eq('id', organizationId);
+    await db.query(
+      'UPDATE superadmin.organizations SET billing_status = $1, payment_status = $2 WHERE id = $3',
+      [plan, 'paid', organizationId]
+    );
 
     return res.json({ success: true, message: 'Payment verified and plan upgraded' });
   } catch (err) {

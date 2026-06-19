@@ -1,4 +1,4 @@
-const supabase = require('../utils/supabase');
+const db = require('../utils/db');
 
 // Roles: 1=Admin, 2=Doctor, 3=Patient, 5=Receptionist, 6=LabStaff, 7=Pharmacist, 8=Reporting
 const ROLES = {
@@ -8,21 +8,25 @@ const ROLES = {
 
 const auditLog = async ({ user_id, role_id, organization_id, action, module, entity_type, entity_id, old_data, new_data, ip_address, description }) => {
   try {
-    await supabase.from('audit_logs').insert([{
-      user_id: user_id || null,
-      role_id: role_id || null,
-      role_name: ROLES[role_id] || 'Unknown',
-      organization_id: organization_id || null,
-      action,
-      module,
-      entity_type: entity_type || null,
-      entity_id: entity_id ? String(entity_id) : null,
-      old_data: old_data || null,
-      new_data: new_data || null,
-      ip_address: ip_address || null,
-      description: description || null,
-      created_at: new Date().toISOString()
-    }]);
+    await db.query(
+      `INSERT INTO audit_logs (user_id, role_id, role_name, organization_id, action, module, entity_type, entity_id, old_data, new_data, ip_address, description, created_at)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)`,
+      [
+        user_id || null,
+        role_id || null,
+        ROLES[role_id] || 'Unknown',
+        organization_id || null,
+        action,
+        module,
+        entity_type || null,
+        entity_id ? String(entity_id) : null,
+        old_data || null,
+        new_data || null,
+        ip_address || null,
+        description || null,
+        new Date().toISOString()
+      ]
+    );
   } catch (err) {
     console.error('Audit log error:', err.message);
   }

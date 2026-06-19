@@ -1,18 +1,23 @@
+const db = require('../utils/db');
 const { auditLog } = require('../middlewares/audit');
 
 // ── Templates ─────────────────────────────────────────────────────────────────
 const getTemplates = async (req, res) => {
   try {
-    const supabase = req.db;
     const organizationId = req.user?.organization_id ?? null;
     const { channel, event_type } = req.query;
-    let query = supabase.from('notification_templates').select('*').eq('is_active', true).order('event_type');
-    if (organizationId) query = query.eq('organization_id', organizationId);
-    if (channel) query = query.eq('channel', channel);
-    if (event_type) query = query.eq('event_type', event_type);
-    const { data, error } = await query;
-    if (error) throw error;
-    return res.json({ templates: data });
+
+    const params = [true];
+    const where = [`is_active = $1`];
+    if (organizationId) { params.push(organizationId); where.push(`organization_id = $${params.length}`); }
+    if (channel)        { params.push(channel);        where.push(`channel = $${params.length}`); }
+    if (event_type)     { params.push(event_type);     where.push(`event_type = $${params.length}`); }
+
+    const result = await req.db.query(
+      `SELECT * FROM notification_templates WHERE ${where.join(' AND ')} ORDER BY event_type`,
+      params
+    );
+    return res.json({ templates: result.rows });
   } catch (err) {
     return res.status(500).json({ error: err.message });
   }
@@ -20,11 +25,19 @@ const getTemplates = async (req, res) => {
 
 const createTemplate = async (req, res) => {
   try {
-    const supabase = req.db;
     const organizationId = req.user?.organization_id ?? null;
-    const { data, error } = await supabase.from('notification_templates').insert([{ ...req.body, organization_id: organizationId, is_active: true, created_by: req.user.id, created_at: new Date().toISOString() }]).select('*').single();
-    if (error) throw error;
-    return res.status(201).json({ message: 'Template created', template: data });
+    const body = req.body;
+    const keys = Object.keys(body);
+    const allKeys = [...keys, 'organization_id', 'is_active', 'created_by', 'created_at'];
+    const allVals = [...keys.map(k => body[k]), organizationId, true, req.user.id, new Date().toISOString()];
+    const cols = allKeys.join(', ');
+    const placeholders = allKeys.map((_, i) => `$${i + 1}`).join(', ');
+
+    const result = await req.db.query(
+      `INSERT INTO notification_templates (${cols}) VALUES (${placeholders}) RETURNING *`,
+      allVals
+    );
+    return res.status(201).json({ message: 'Template created', template: result.rows[0] });
   } catch (err) {
     return res.status(500).json({ error: err.message });
   }
@@ -32,14 +45,21 @@ const createTemplate = async (req, res) => {
 
 const updateTemplate = async (req, res) => {
   try {
-    const supabase = req.db;
     const organizationId = req.user?.organization_id ?? null;
-    let q = supabase.from('notification_templates').update({ ...req.body, updated_by: req.user.id, updated_at: new Date().toISOString() }).eq('id', req.params.id);
-    if (organizationId) q = q.eq('organization_id', organizationId);
-    const { data, error } = await q.select('*').single();
-    if (error) throw error;
-    if (!data) return res.status(404).json({ error: 'Template not found' });
-    return res.json({ message: 'Template updated', template: data });
+    const body = { ...req.body, updated_by: req.user.id, updated_at: new Date().toISOString() };
+    const keys = Object.keys(body);
+    const values = Object.values(body);
+    const setClauses = keys.map((k, i) => `${k} = $${i + 1}`).join(', ');
+    values.push(req.params.id);
+    const idParam = values.length;
+
+    let sql = `UPDATE notification_templates SET ${setClauses} WHERE id = $${idParam}`;
+    if (organizationId) { values.push(organizationId); sql += ` AND organization_id = $${values.length}`; }
+    sql += ' RETURNING *';
+
+    const result = await req.db.query(sql, values);
+    if (!result.rows.length) return res.status(404).json({ error: 'Template not found' });
+    return res.json({ message: 'Template updated', template: result.rows[0] });
   } catch (err) {
     return res.status(500).json({ error: err.message });
   }
@@ -48,25 +68,23 @@ const updateTemplate = async (req, res) => {
 // ── Send Manual Notification ──────────────────────────────────────────────────
 const sendNotification = async (req, res) => {
   try {
-    const supabase = req.db;
+    const reqDb = req.db;
     const { patient_id, channel, message, subject, event_type, recipient_phone, recipient_email } = req.body;
     if (!message || !channel) return res.status(400).json({ error: 'message and channel are required' });
 
-    const { data: log, error: logErr } = await supabase.from('notification_logs').insert([{
-      patient_id: patient_id || null,
-      channel,
-      event_type: event_type || 'manual',
-      subject: subject || null,
-      message,
-      recipient_phone: recipient_phone || null,
-      recipient_email: recipient_email || null,
-      status: 'pending',
-      organization_id: req.user?.organization_id ?? null,
-      sent_by: req.user.id,
-      created_at: new Date().toISOString()
-    }]).select('*').single();
-
-    if (logErr) throw logErr;
+    const logRes = await reqDb.query(
+      `INSERT INTO notification_logs
+         (patient_id, channel, event_type, subject, message, recipient_phone, recipient_email,
+          status, organization_id, sent_by, created_at)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,'pending',$8,$9,$10)
+       RETURNING *`,
+      [
+        patient_id || null, channel, event_type || 'manual', subject || null, message,
+        recipient_phone || null, recipient_email || null,
+        req.user?.organization_id ?? null, req.user.id, new Date().toISOString()
+      ]
+    );
+    const log = logRes.rows[0];
 
     // Attempt delivery
     let delivered = false;
@@ -84,7 +102,10 @@ const sendNotification = async (req, res) => {
       console.error('Delivery error:', deliveryErr.message);
     }
 
-    await supabase.from('notification_logs').update({ status: delivered ? 'sent' : 'failed', sent_at: delivered ? new Date().toISOString() : null }).eq('id', log.id);
+    await reqDb.query(
+      `UPDATE notification_logs SET status=$1, sent_at=$2 WHERE id=$3`,
+      [delivered ? 'sent' : 'failed', delivered ? new Date().toISOString() : null, log.id]
+    );
 
     return res.status(201).json({ message: delivered ? 'Notification sent' : 'Notification queued (delivery failed)', log_id: log.id, delivered });
   } catch (err) {
@@ -95,25 +116,48 @@ const sendNotification = async (req, res) => {
 // ── Get Notification Logs ─────────────────────────────────────────────────────
 const getNotificationLogs = async (req, res) => {
   try {
-    const supabase = req.db;
+    const reqDb = req.db;
     const organizationId = req.user?.organization_id ?? null;
     const { patient_id, status, channel, event_type, page = 1, limit = 30 } = req.query;
     const offset = (parseInt(page) - 1) * parseInt(limit);
 
-    let query = supabase.from('notification_logs')
-      .select('*, patients(first_name, last_name, patient_uid)', { count: 'exact' })
-      .order('created_at', { ascending: false })
-      .range(offset, offset + parseInt(limit) - 1);
+    const params = [];
+    const where = [];
+    if (organizationId) { params.push(organizationId); where.push(`nl.organization_id = $${params.length}`); }
+    if (patient_id)     { params.push(patient_id);     where.push(`nl.patient_id = $${params.length}`); }
+    if (status)         { params.push(status);         where.push(`nl.status = $${params.length}`); }
+    if (channel)        { params.push(channel);        where.push(`nl.channel = $${params.length}`); }
+    if (event_type)     { params.push(event_type);     where.push(`nl.event_type = $${params.length}`); }
 
-    if (organizationId) query = query.eq('organization_id', organizationId);
-    if (patient_id) query = query.eq('patient_id', patient_id);
-    if (status) query = query.eq('status', status);
-    if (channel) query = query.eq('channel', channel);
-    if (event_type) query = query.eq('event_type', event_type);
+    params.push(parseInt(limit));
+    params.push(offset);
 
-    const { data, error, count } = await query;
-    if (error) throw error;
-    return res.json({ logs: data, total: count });
+    const countResult = await reqDb.query(
+      `SELECT COUNT(*) FROM notification_logs nl${where.length ? ' WHERE ' + where.join(' AND ') : ''}`,
+      params.slice(0, -2)
+    );
+
+    const result = await reqDb.query(
+      `SELECT nl.*,
+              p.first_name AS patient_first_name, p.last_name AS patient_last_name, p.patient_uid
+       FROM notification_logs nl
+       LEFT JOIN patients p ON p.id = nl.patient_id
+       ${where.length ? 'WHERE ' + where.join(' AND ') : ''}
+       ORDER BY nl.created_at DESC
+       LIMIT $${params.length - 1} OFFSET $${params.length}`,
+      params
+    );
+
+    const logs = result.rows.map(row => ({
+      ...row,
+      patients: row.patient_first_name ? {
+        first_name: row.patient_first_name,
+        last_name: row.patient_last_name,
+        patient_uid: row.patient_uid
+      } : null
+    }));
+
+    return res.json({ logs, total: parseInt(countResult.rows[0].count) });
   } catch (err) {
     return res.status(500).json({ error: err.message });
   }
@@ -122,12 +166,19 @@ const getNotificationLogs = async (req, res) => {
 // ── Retry Failed Notification ─────────────────────────────────────────────────
 const retryNotification = async (req, res) => {
   try {
-    const supabase = req.db;
+    const reqDb = req.db;
     const organizationId = req.user?.organization_id ?? null;
     const { id } = req.params;
-    let logQ = supabase.from('notification_logs').select('*').eq('id', id);
-    if (organizationId) logQ = logQ.eq('organization_id', organizationId);
-    const { data: log } = await logQ.single();
+
+    const params = [id];
+    let orgClause = '';
+    if (organizationId) { params.push(organizationId); orgClause = ` AND organization_id = $${params.length}`; }
+
+    const logResult = await reqDb.query(
+      `SELECT * FROM notification_logs WHERE id = $1${orgClause}`,
+      params
+    );
+    const log = logResult.rows[0];
     if (!log) return res.status(404).json({ error: 'Notification log not found' });
     if (log.status === 'sent' || log.status === 'delivered') return res.status(400).json({ error: 'Notification already delivered' });
 
@@ -147,7 +198,10 @@ const retryNotification = async (req, res) => {
     }
 
     const retryCount = (log.retry_count || 0) + 1;
-    await supabase.from('notification_logs').update({ status: delivered ? 'sent' : 'failed', retry_count: retryCount, last_retry_at: new Date().toISOString() }).eq('id', id);
+    await reqDb.query(
+      `UPDATE notification_logs SET status=$1, retry_count=$2, last_retry_at=$3 WHERE id=$4`,
+      [delivered ? 'sent' : 'failed', retryCount, new Date().toISOString(), id]
+    );
 
     return res.json({ message: delivered ? 'Retry successful' : 'Retry failed', delivered });
   } catch (err) {
@@ -158,7 +212,13 @@ const retryNotification = async (req, res) => {
 // ── Internal trigger (used by cron jobs & other modules) ──────────────────────
 const triggerEventNotification = async ({ event_type, patient_id, channel, recipient_phone, recipient_email, variables = {} }) => {
   try {
-    const { data: template } = await supabase.from('notification_templates').select('*').eq('event_type', event_type).eq('channel', channel).eq('is_active', true).single();
+    const templateRes = await db.query(
+      `SELECT * FROM notification_templates
+       WHERE event_type = $1 AND channel = $2 AND is_active = true
+       LIMIT 1`,
+      [event_type, channel]
+    );
+    const template = templateRes.rows[0];
     if (!template) return;
 
     let message = template.body;
@@ -168,22 +228,24 @@ const triggerEventNotification = async ({ event_type, patient_id, channel, recip
       subject = subject.replace(new RegExp(`{{${key}}}`, 'g'), variables[key] || '');
     });
 
-    await supabase.from('notification_logs').insert([{
-      patient_id: patient_id || null,
-      channel,
-      event_type,
-      subject,
-      message,
-      recipient_phone: recipient_phone || null,
-      recipient_email: recipient_email || null,
-      status: 'pending',
-      created_at: new Date().toISOString()
-    }]);
+    const logRes = await db.query(
+      `INSERT INTO notification_logs
+         (patient_id, channel, event_type, subject, message, recipient_phone, recipient_email, status, created_at)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,'pending',$8)
+       RETURNING id`,
+      [patient_id || null, channel, event_type, subject, message, recipient_phone || null, recipient_email || null, new Date().toISOString()]
+    );
+    const logId = logRes.rows[0]?.id;
 
     if (channel === 'sms' && recipient_phone) {
       const { sendSMS } = require('../utils/notify');
       await sendSMS(recipient_phone, message);
-      await supabase.from('notification_logs').update({ status: 'sent', sent_at: new Date().toISOString() }).eq('patient_id', patient_id).eq('event_type', event_type).eq('status', 'pending');
+      if (logId) {
+        await db.query(
+          `UPDATE notification_logs SET status='sent', sent_at=$1 WHERE id=$2`,
+          [new Date().toISOString(), logId]
+        );
+      }
     }
   } catch (err) {
     console.error('triggerEventNotification error:', err.message);

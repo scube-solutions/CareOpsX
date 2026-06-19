@@ -15,39 +15,49 @@ const chat = async (req, res) => {
     // Resolve / create the conversation.
     let convId = conversation_id;
     if (convId) {
-      const { data: existing } = await db.from('ai_conversations').select('id').eq('id', convId).eq('user_id', req.user.id).maybeSingle();
-      if (!existing) convId = null;
+      const existingRes = await db.query(
+        'SELECT id FROM ai_conversations WHERE id = $1 AND user_id = $2 LIMIT 1',
+        [convId, req.user.id]
+      );
+      if (!existingRes.rows.length) convId = null;
     }
     if (!convId) {
       const title = String(message).trim().slice(0, 60);
-      const { data: conv, error } = await db.from('ai_conversations')
-        .insert([{ organization_id: organizationId, user_id: req.user.id, title }])
-        .select('id').single();
-      if (error) throw error;
-      convId = conv.id;
+      const convRes = await db.query(
+        'INSERT INTO ai_conversations (organization_id, user_id, title) VALUES ($1, $2, $3) RETURNING id',
+        [organizationId, req.user.id, title]
+      );
+      convId = convRes.rows[0].id;
     }
 
     // Load recent history (last 10 messages) for context.
-    const { data: history } = await db.from('ai_messages')
-      .select('role, content').eq('conversation_id', convId).order('created_at', { ascending: true }).limit(10);
+    const historyRes = await db.query(
+      'SELECT role, content FROM ai_messages WHERE conversation_id = $1 ORDER BY created_at ASC LIMIT 10',
+      [convId]
+    );
+    const history = historyRes.rows || [];
 
     const { answer, toolsUsed, report } = await runChat({
       db, user: req.user, orgId: organizationId, orgName: organization?.organization_name,
-      message, priorMessages: history || [],
+      message, priorMessages: history,
     });
 
     // Persist the turn.
-    await db.from('ai_messages').insert([
-      { conversation_id: convId, organization_id: organizationId, role: 'user', content: message },
-      { conversation_id: convId, organization_id: organizationId, role: 'assistant', content: answer, tools_used: toolsUsed },
-    ]);
-    await db.from('ai_conversations').update({ updated_at: new Date().toISOString() }).eq('id', convId);
+    await db.query(
+      `INSERT INTO ai_messages (conversation_id, organization_id, role, content, tools_used) 
+       VALUES ($1, $2, $3, $4, $5), ($6, $7, $8, $9, $10)`,
+      [
+        convId, organizationId, 'user', message, null,
+        convId, organizationId, 'assistant', answer, toolsUsed || null
+      ]
+    );
+    await db.query('UPDATE ai_conversations SET updated_at = $1 WHERE id = $2', [new Date().toISOString(), convId]);
 
     // Audit (spec: capture user/role/query/response/module/time).
     await auditLog({
       user_id: req.user.id, role_id: req.user.role_id, organization_id: organizationId,
       action: 'AI_QUERY', module: 'AI', entity_type: 'ai_conversation', entity_id: convId,
-      description: `Q: ${String(message).slice(0, 200)} | tools: ${toolsUsed.join(',') || 'none'}`,
+      description: `Q: ${String(message).slice(0, 200)} | tools: ${(toolsUsed || []).join(',') || 'none'}`,
     });
 
     return res.json({ conversation_id: convId, answer, tools_used: toolsUsed, report });
@@ -67,17 +77,26 @@ const chatStream = async (req, res) => {
 
     let convId = conversation_id;
     if (convId) {
-      const { data: existing } = await db.from('ai_conversations').select('id').eq('id', convId).eq('user_id', req.user.id).maybeSingle();
-      if (!existing) convId = null;
+      const existingRes = await db.query(
+        'SELECT id FROM ai_conversations WHERE id = $1 AND user_id = $2 LIMIT 1',
+        [convId, req.user.id]
+      );
+      if (!existingRes.rows.length) convId = null;
     }
     if (!convId) {
-      const { data: conv } = await db.from('ai_conversations')
-        .insert([{ organization_id: organizationId, user_id: req.user.id, title: String(message).trim().slice(0, 60) }])
-        .select('id').single();
-      convId = conv.id;
+      const title = String(message).trim().slice(0, 60);
+      const convRes = await db.query(
+        'INSERT INTO ai_conversations (organization_id, user_id, title) VALUES ($1, $2, $3) RETURNING id',
+        [organizationId, req.user.id, title]
+      );
+      convId = convRes.rows[0].id;
     }
-    const { data: history } = await db.from('ai_messages')
-      .select('role, content').eq('conversation_id', convId).order('created_at', { ascending: true }).limit(10);
+
+    const historyRes = await db.query(
+      'SELECT role, content FROM ai_messages WHERE conversation_id = $1 ORDER BY created_at ASC LIMIT 10',
+      [convId]
+    );
+    const history = historyRes.rows || [];
 
     // Open SSE stream.
     res.writeHead(200, { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache', Connection: 'keep-alive' });
@@ -86,18 +105,22 @@ const chatStream = async (req, res) => {
     const onToken = (t) => res.write(`data: ${JSON.stringify({ token: t })}\n\n`);
     const { answer, toolsUsed, report } = await runChatStream({
       db, user: req.user, orgId: organizationId, orgName: organization?.organization_name,
-      message, priorMessages: history || [],
+      message, priorMessages: history,
     }, onToken);
 
-    await db.from('ai_messages').insert([
-      { conversation_id: convId, organization_id: organizationId, role: 'user', content: message },
-      { conversation_id: convId, organization_id: organizationId, role: 'assistant', content: answer, tools_used: toolsUsed },
-    ]);
-    await db.from('ai_conversations').update({ updated_at: new Date().toISOString() }).eq('id', convId);
+    await db.query(
+      `INSERT INTO ai_messages (conversation_id, organization_id, role, content, tools_used) 
+       VALUES ($1, $2, $3, $4, $5), ($6, $7, $8, $9, $10)`,
+      [
+        convId, organizationId, 'user', message, null,
+        convId, organizationId, 'assistant', answer, toolsUsed || null
+      ]
+    );
+    await db.query('UPDATE ai_conversations SET updated_at = $1 WHERE id = $2', [new Date().toISOString(), convId]);
     await auditLog({
       user_id: req.user.id, role_id: req.user.role_id, organization_id: organizationId,
       action: 'AI_QUERY', module: 'AI', entity_type: 'ai_conversation', entity_id: convId,
-      description: `Q: ${String(message).slice(0, 200)} | tools: ${toolsUsed.join(',') || 'none'}`,
+      description: `Q: ${String(message).slice(0, 200)} | tools: ${(toolsUsed || []).join(',') || 'none'}`,
     });
 
     res.write(`data: ${JSON.stringify({ done: true, conversation_id: convId, report, answer })}\n\n`);
@@ -125,8 +148,6 @@ const dashboardSummary = async (req, res) => {
 };
 
 // POST /ai/report  { report, format, date_from?, date_to? } → file download
-// Returns the file as base64 so the browser can save it regardless of the auth
-// header (downloads via <a> can't carry Authorization). RBAC enforced in buildReport.
 const generateReport = async (req, res) => {
   try {
     const { report, format = 'pdf', date_from, date_to } = req.body;
@@ -155,47 +176,58 @@ const listConversations = async (req, res) => {
   try {
     const db = req.db;
     const q = (req.query.q || '').trim();
-    let matchIds = null;
+    let queryText = `
+      SELECT DISTINCT c.id, c.title, c.created_at, c.updated_at
+      FROM ai_conversations c
+      LEFT JOIN ai_messages m ON m.conversation_id = c.id
+      WHERE c.user_id = $1
+    `;
+    const params = [req.user.id];
     if (q) {
-      // Conversation ids whose messages contain the search term.
-      const { data: msgHits } = await db.from('ai_messages')
-        .select('conversation_id').ilike('content', `%${q}%`).limit(500);
-      matchIds = [...new Set((msgHits || []).map(m => m.conversation_id))];
+      params.push(`%${q}%`);
+      queryText += ` AND (c.title ILIKE $2 OR m.content ILIKE $2)`;
     }
-    let query = db.from('ai_conversations')
-      .select('id, title, created_at, updated_at')
-      .eq('user_id', req.user.id).order('updated_at', { ascending: false }).limit(50);
-    if (q) {
-      const idList = (matchIds && matchIds.length) ? `,id.in.(${matchIds.join(',')})` : '';
-      query = query.or(`title.ilike.%${q}%${idList}`);
-    }
-    const { data, error } = await query;
-    if (error) throw error;
-    return res.json({ conversations: data || [] });
-  } catch (err) { return res.status(500).json({ error: err.message }); }
+    queryText += ' ORDER BY c.updated_at DESC LIMIT 50';
+
+    const result = await db.query(queryText, params);
+    return res.json({ conversations: result.rows || [] });
+  } catch (err) {
+    return res.status(500).json({ error: err.message });
+  }
 };
 
 // GET /ai/conversations/:id/messages
 const getMessages = async (req, res) => {
   try {
     const db = req.db;
-    const { data: conv } = await db.from('ai_conversations').select('id').eq('id', req.params.id).eq('user_id', req.user.id).maybeSingle();
-    if (!conv) return res.status(404).json({ error: 'Conversation not found' });
-    const { data, error } = await db.from('ai_messages')
-      .select('role, content, tools_used, created_at').eq('conversation_id', req.params.id).order('created_at', { ascending: true });
-    if (error) throw error;
-    return res.json({ messages: data || [] });
-  } catch (err) { return res.status(500).json({ error: err.message }); }
+    const convRes = await db.query(
+      'SELECT id FROM ai_conversations WHERE id = $1 AND user_id = $2 LIMIT 1',
+      [req.params.id, req.user.id]
+    );
+    if (!convRes.rows.length) return res.status(404).json({ error: 'Conversation not found' });
+
+    const messagesRes = await db.query(
+      'SELECT role, content, tools_used, created_at FROM ai_messages WHERE conversation_id = $1 ORDER BY created_at ASC',
+      [req.params.id]
+    );
+    return res.json({ messages: messagesRes.rows || [] });
+  } catch (err) {
+    return res.status(500).json({ error: err.message });
+  }
 };
 
 // DELETE /ai/conversations/:id
 const deleteConversation = async (req, res) => {
   try {
     const db = req.db;
-    const { error } = await db.from('ai_conversations').delete().eq('id', req.params.id).eq('user_id', req.user.id);
-    if (error) throw error;
+    const deleteRes = await db.query(
+      'DELETE FROM ai_conversations WHERE id = $1 AND user_id = $2',
+      [req.params.id, req.user.id]
+    );
     return res.json({ message: 'Conversation deleted' });
-  } catch (err) { return res.status(500).json({ error: err.message }); }
+  } catch (err) {
+    return res.status(500).json({ error: err.message });
+  }
 };
 
 module.exports = { chat, chatStream, dashboardSummary, generateReport, listConversations, getMessages, deleteConversation };

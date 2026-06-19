@@ -1,18 +1,17 @@
 const cron = require('node-cron');
-const supabase = require('../utils/supabase');
+const db = require('../utils/db');
 const { notifyAppointmentReminder } = require('../utils/notify');
 
 const buildDoctorName = (appointment) => {
-  const first = appointment?.doctors?.users?.first_name || '';
-  const last = appointment?.doctors?.users?.last_name || '';
+  const first = appointment?.doc_first_name || '';
+  const last = appointment?.doc_last_name || '';
   const full = `${first} ${last}`.trim();
-  return full || appointment?.doctors?.users?.name || 'Doctor';
+  return full || appointment?.doc_name || 'Doctor';
 };
 
 const buildPatientName = (appointment) => {
-  const p = appointment?.patients || {};
-  if (p.name) return p.name;
-  const full = `${p.first_name || ''} ${p.last_name || ''}`.trim();
+  if (appointment?.patient_name) return appointment.patient_name;
+  const full = `${appointment?.patient_first_name || ''} ${appointment?.patient_last_name || ''}`.trim();
   return full || 'Patient';
 };
 
@@ -25,22 +24,20 @@ const toHHMM = (value) => {
 };
 
 const fetchAppointmentsByDate = async (date) => {
-  const { data, error } = await supabase
-    .from('appointments')
-    .select(`
-      id,
-      booking_id,
-      appointment_date,
-      appointment_time,
-      status,
-      patients ( * ),
-      doctors ( users ( first_name, last_name, name ) )
-    `)
-    .eq('appointment_date', date)
-    .in('status', ['booked', 'confirmed']);
+  const result = await db.query(
+    `SELECT a.id, a.booking_id, a.appointment_date, a.appointment_time, a.status,
+            p.first_name AS patient_first_name, p.last_name AS patient_last_name, 
+            p.phone AS patient_phone, p.email AS patient_email, p.name AS patient_name,
+            u.first_name AS doc_first_name, u.last_name AS doc_last_name, u.name AS doc_name
+     FROM appointments a
+     LEFT JOIN patients p ON a.patient_id = p.id
+     LEFT JOIN doctors d ON a.doctor_id = d.id
+     LEFT JOIN users u ON d.user_id = u.id
+     WHERE a.appointment_date = $1 AND a.status = ANY($2)`,
+    [date, ['booked', 'confirmed']]
+  );
 
-  if (error) throw error;
-  return data || [];
+  return result.rows || [];
 };
 
 const runT24Reminders = async () => {
@@ -55,8 +52,8 @@ const runT24Reminders = async () => {
       rows.map((a) =>
         notifyAppointmentReminder({
           patientName: buildPatientName(a),
-          patientPhone: a.patients?.phone,
-          patientEmail: a.patients?.email,
+          patientPhone: a.patient_phone,
+          patientEmail: a.patient_email,
           doctorName: buildDoctorName(a),
           date: a.appointment_date,
           time: toHHMM(a.appointment_time),
@@ -91,8 +88,8 @@ const runT1Reminders = async () => {
       due.map((a) =>
         notifyAppointmentReminder({
           patientName: buildPatientName(a),
-          patientPhone: a.patients?.phone,
-          patientEmail: a.patients?.email,
+          patientPhone: a.patient_phone,
+          patientEmail: a.patient_email,
           doctorName: buildDoctorName(a),
           date: a.appointment_date,
           time: toHHMM(a.appointment_time),

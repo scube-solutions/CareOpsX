@@ -73,17 +73,46 @@ const defaultRow = (key, i) => ({
 // DB rows overlay the hardcoded defaults, so edits win but nothing vanishes.
 const loadPlans = async (db) => {
   try {
-    const { data } = await db.from('subscription_plans').select('*');
-    const byKey = {}; (data || []).forEach(r => { byKey[r.key] = r; });
+    const res = await db.query('SELECT * FROM subscription_plans');
+    const data = res.rows || [];
+    const byKey = {}; data.forEach(r => { byKey[r.key] = r; });
 
     const missing = PLAN_KEYS.filter(k => !byKey[k]).map(k => defaultRow(k, PLAN_KEYS.indexOf(k)));
-    if (missing.length) { try { await db.from('subscription_plans').upsert(missing, { onConflict: 'key' }); } catch { /* ignore */ } }
+    if (missing.length) {
+      for (const row of missing) {
+        try {
+          await db.query(
+            `INSERT INTO subscription_plans (key, label, manual, portal_access, seat_limits, feature_flags, sort_order) 
+             VALUES ($1, $2, $3, $4, $5, $6, $7) 
+             ON CONFLICT (key) DO UPDATE SET 
+               label = EXCLUDED.label, 
+               manual = EXCLUDED.manual, 
+               portal_access = EXCLUDED.portal_access, 
+               seat_limits = EXCLUDED.seat_limits, 
+               feature_flags = EXCLUDED.feature_flags, 
+               sort_order = EXCLUDED.sort_order`,
+            [
+              row.key,
+              row.label,
+              row.manual,
+              row.portal_access,
+              row.seat_limits,
+              row.feature_flags,
+              row.sort_order
+            ]
+          );
+        } catch (e) {
+          console.error(`Error seeding plan ${row.key}:`, e.message);
+        }
+      }
+    }
 
     cache = {};
     PLAN_KEYS.forEach((k, i) => { cache[k] = defaultRow(k, i); });
-    [...(data || []), ...missing].forEach(r => { cache[r.key] = { ...cache[r.key], ...r }; });
+    [...data, ...missing].forEach(r => { cache[r.key] = { ...cache[r.key], ...r }; });
     return cache;
-  } catch {
+  } catch (err) {
+    console.error("loadPlans error:", err.message);
     cache = null; // fall back to hardcoded
     return PLANS;
   }

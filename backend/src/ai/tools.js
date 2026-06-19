@@ -11,8 +11,16 @@ const { getEffectivePermissionsForRoles, rolesOf } = require('../utils/permissio
 const { REPORT_NAMES, buildReport } = require('./reports');
 
 const today = () => new Date().toISOString().split('T')[0];
-const orgFilter = (q, orgId) => (orgId ? q.eq('organization_id', orgId) : q);
 const sum = (rows, f) => (rows || []).reduce((s, r) => s + parseFloat(r[f] || 0), 0);
+
+const orgFilterSQL = (baseSQL, orgId, params) => {
+  let sql = baseSQL;
+  if (orgId) {
+    params.push(orgId);
+    sql += (baseSQL.toLowerCase().includes('where') ? ' AND' : ' WHERE') + ` organization_id = $${params.length}`;
+  }
+  return sql;
+};
 
 // ── Tool implementations ─────────────────────────────────────────────────────
 const TOOLS = {
@@ -29,29 +37,50 @@ const TOOLS = {
     run: async ({ db, orgId, args }) => {
       const from = args.date_from || today();
       const to   = args.date_to   || today();
-      const [patients, appts, consults, invoices, labOrders] = await Promise.all([
-        orgFilter(db.from('patients').select('id', { count: 'exact', head: true }).eq('is_archived', false), orgId),
-        orgFilter(db.from('appointments').select('id, status', { count: 'exact' }).gte('appointment_date', from).lte('appointment_date', to), orgId),
-        orgFilter(db.from('consultations').select('id', { count: 'exact', head: true }).gte('consultation_date', from).lte('consultation_date', to), orgId),
-        orgFilter(db.from('invoices').select('total_amount, paid_amount, status').gte('created_at', `${from}T00:00:00`).lte('created_at', `${to}T23:59:59`), orgId),
-        orgFilter(db.from('lab_orders').select('id', { count: 'exact', head: true }).gte('ordered_at', `${from}T00:00:00`).lte('ordered_at', `${to}T23:59:59`), orgId),
+
+      const patientsParams = [];
+      const patientsSQL = orgFilterSQL('SELECT COUNT(*) FROM patients WHERE is_archived = false', orgId, patientsParams);
+
+      const apptsParams = [from, to];
+      const apptsSQL = orgFilterSQL('SELECT status FROM appointments WHERE appointment_date >= $1 AND appointment_date <= $2', orgId, apptsParams);
+
+      const consultsParams = [from, to];
+      const consultsSQL = orgFilterSQL('SELECT COUNT(*) FROM consultations WHERE consultation_date >= $1 AND consultation_date <= $2', orgId, consultsParams);
+
+      const invoicesParams = [`${from}T00:00:00`, `${to}T23:59:59`];
+      const invoicesSQL = orgFilterSQL('SELECT total_amount, paid_amount, status FROM invoices WHERE created_at >= $1 AND created_at <= $2', orgId, invoicesParams);
+
+      const labParams = [`${from}T00:00:00`, `${to}T23:59:59`];
+      const labSQL = orgFilterSQL('SELECT COUNT(*) FROM lab_orders WHERE ordered_at >= $1 AND ordered_at <= $2', orgId, labParams);
+
+      const [patientsRes, apptsRes, consultsRes, invoicesRes, labOrdersRes] = await Promise.all([
+        db.query(patientsSQL, patientsParams),
+        db.query(apptsSQL, apptsParams),
+        db.query(consultsSQL, consultsParams),
+        db.query(invoicesSQL, invoicesParams),
+        db.query(labSQL, labParams),
       ]);
-      const inv = invoices.data || [];
-      const apptRows = appts.data || [];
+
+      const patientsCount = parseInt(patientsRes.rows[0].count || 0);
+      const apptRows = apptsRes.rows || [];
+      const consultsCount = parseInt(consultsRes.rows[0].count || 0);
+      const inv = invoicesRes.rows || [];
+      const labOrdersCount = parseInt(labOrdersRes.rows[0].count || 0);
+
       return {
         period: { from, to },
-        total_patients: patients.count || 0,
-        total_appointments: appts.count || 0,
+        total_patients: patientsCount,
+        total_appointments: apptRows.length,
         appointment_status: {
           completed: apptRows.filter(a => a.status === 'completed').length,
           cancelled: apptRows.filter(a => a.status === 'cancelled').length,
           no_show:   apptRows.filter(a => a.status === 'no_show').length,
           booked:    apptRows.filter(a => a.status === 'booked').length,
         },
-        completed_consultations: consults.count || 0,
+        completed_consultations: consultsCount,
         total_revenue: sum(inv.filter(i => i.status === 'paid'), 'total_amount'),
         pending_collections: inv.filter(i => ['pending', 'partial'].includes(i.status)).reduce((s, i) => s + parseFloat(i.total_amount || 0) - parseFloat(i.paid_amount || 0), 0),
-        lab_orders: labOrders.count || 0,
+        lab_orders: labOrdersCount,
         currency: 'INR',
       };
     },
@@ -70,11 +99,16 @@ const TOOLS = {
     run: async ({ db, orgId, args }) => {
       const from = args.date_from || today();
       const to   = args.date_to   || today();
-      const { data: invoices } = await orgFilter(
-        db.from('invoices').select('total_amount, paid_amount, status, invoice_type')
-          .gte('created_at', `${from}T00:00:00`).lte('created_at', `${to}T23:59:59`), orgId);
+      const params = [`${from}T00:00:00`, `${to}T23:59:59`];
+      const sql = orgFilterSQL(
+        'SELECT total_amount, paid_amount, status, invoice_type FROM invoices WHERE created_at >= $1 AND created_at <= $2',
+        orgId,
+        params
+      );
+      const res = await db.query(sql, params);
+      const invoices = res.rows || [];
       const grouped = {};
-      (invoices || []).forEach(i => {
+      invoices.forEach(i => {
         const k = i.invoice_type || 'other';
         if (!grouped[k]) grouped[k] = { type: k, total: 0, paid: 0, count: 0 };
         grouped[k].total += parseFloat(i.total_amount || 0);
@@ -102,20 +136,26 @@ const TOOLS = {
     },
     run: async ({ db, orgId, args }) => {
       const date = args.on_date || today();
-      const [staff, leaves] = await Promise.all([
-        orgFilter(db.from('staff_profiles').select('id, department, is_active, employment_status'), orgId),
-        orgFilter(db.from('hr_leave_requests').select('id, user_id, status')
-          .eq('status', 'approved').lte('from_date', date).gte('to_date', date), orgId)
-          .then(r => r).catch(() => ({ data: [] })),
+      
+      const staffParams = [];
+      const staffSQL = orgFilterSQL('SELECT id, department, is_active, employment_status FROM staff_profiles', orgId, staffParams);
+      
+      const leaveParams = [date, date];
+      const leaveSQL = orgFilterSQL('SELECT id, user_id, status FROM hr_leave_requests WHERE status = \'approved\' AND from_date <= $1 AND to_date >= $2', orgId, leaveParams);
+
+      const [staffRes, leavesRes] = await Promise.all([
+        db.query(staffSQL, staffParams),
+        db.query(leaveSQL, leaveParams).catch(() => ({ rows: [] })),
       ]);
-      const rows = staff.data || [];
+      const rows = staffRes.rows || [];
+      const leaves = leavesRes.rows || [];
       const byDept = {};
       rows.forEach(s => { const d = s.department || 'Unassigned'; byDept[d] = (byDept[d] || 0) + 1; });
       return {
         date,
         total_employees: rows.length,
         active_employees: rows.filter(s => s.is_active !== false).length,
-        on_leave_today: (leaves.data || []).length,
+        on_leave_today: leaves.length,
         headcount_by_department: byDept,
       };
     },
@@ -126,9 +166,11 @@ const TOOLS = {
     description: 'List pharmacy medicines at or below their minimum stock threshold (need replenishment). Use for inventory/low-stock questions.',
     parameters: { type: 'object', properties: {} },
     run: async ({ db, orgId }) => {
-      const { data } = await orgFilter(
-        db.from('pharmacy_inventory').select('medicine_name, current_stock, reorder_level').eq('is_active', true), orgId);
-      const low = (data || []).filter(m => m.reorder_level != null && Number(m.current_stock) <= Number(m.reorder_level));
+      const params = [];
+      const sql = orgFilterSQL('SELECT medicine_name, current_stock, reorder_level FROM pharmacy_inventory WHERE is_active = true', orgId, params);
+      const res = await db.query(sql, params);
+      const data = res.rows || [];
+      const low = data.filter(m => m.reorder_level != null && Number(m.current_stock) <= Number(m.reorder_level));
       return {
         low_stock_count: low.length,
         items: low.slice(0, 50).map(m => ({ medicine: m.medicine_name, current_stock: m.current_stock, reorder_level: m.reorder_level })),
@@ -149,9 +191,10 @@ const TOOLS = {
     run: async ({ db, orgId, args }) => {
       const from = args.date_from || today();
       const to   = args.date_to   || today();
-      const { data } = await orgFilter(
-        db.from('appointments').select('id, status').gte('appointment_date', from).lte('appointment_date', to), orgId);
-      const rows = data || [];
+      const params = [from, to];
+      const sql = orgFilterSQL('SELECT id, status FROM appointments WHERE appointment_date >= $1 AND appointment_date <= $2', orgId, params);
+      const res = await db.query(sql, params);
+      const rows = res.rows || [];
       return {
         period: { from, to },
         total: rows.length,
@@ -176,17 +219,18 @@ const TOOLS = {
     run: async ({ db, orgId, args }) => {
       const to = args.date_to || today();
       const from = args.date_from || new Date(Date.now() - 30 * 864e5).toISOString().split('T')[0];
-      const { data: consults } = await orgFilter(
-        db.from('consultations').select('id, doctor_id').gte('consultation_date', from).lte('consultation_date', to), orgId);
-      const rows = consults || [];
+      const params = [from, to];
+      const sql = orgFilterSQL('SELECT id, doctor_id FROM consultations WHERE consultation_date >= $1 AND consultation_date <= $2', orgId, params);
+      const res = await db.query(sql, params);
+      const rows = res.rows || [];
       const docIds = [...new Set(rows.map(c => c.doctor_id).filter(Boolean))];
       const nameMap = {};
       if (docIds.length) {
-        const { data: docs } = await db.from('doctors').select('id, user_id').in('id', docIds);
-        const userIds = [...new Set((docs || []).map(d => d.user_id).filter(Boolean))];
-        const { data: us } = await db.from('users').select('id, first_name, last_name').in('id', userIds);
-        const um = {}; (us || []).forEach(u => { um[u.id] = `${u.first_name || ''} ${u.last_name || ''}`.trim(); });
-        (docs || []).forEach(d => { nameMap[d.id] = um[d.user_id] || 'Unknown'; });
+        const docsRes = await db.query('SELECT id, user_id FROM doctors WHERE id = ANY($1)', [docIds]);
+        const userIds = [...new Set((docsRes.rows || []).map(d => d.user_id).filter(Boolean))];
+        const usersRes = await db.query('SELECT id, first_name, last_name FROM users WHERE id = ANY($1)', [userIds]);
+        const um = {}; (usersRes.rows || []).forEach(u => { um[u.id] = `${u.first_name || ''} ${u.last_name || ''}`.trim(); });
+        (docsRes.rows || []).forEach(d => { nameMap[d.id] = um[d.user_id] || 'Unknown'; });
       }
       const perf = {};
       rows.forEach(c => {
@@ -207,11 +251,13 @@ const TOOLS = {
     },
     run: async ({ db, orgId, args }) => {
       const date = args.on_date || today();
-      const { data } = await orgFilter(
-        db.from('attendance_logs').select('status').eq('date', date), orgId);
+      const params = [date];
+      const sql = orgFilterSQL('SELECT status FROM attendance_logs WHERE date = $1', orgId, params);
+      const res = await db.query(sql, params);
+      const data = res.rows || [];
       const counts = {};
-      (data || []).forEach(r => { const k = r.status || 'unknown'; counts[k] = (counts[k] || 0) + 1; });
-      return { date, total_marked: (data || []).length, by_status: counts };
+      data.forEach(r => { const k = r.status || 'unknown'; counts[k] = (counts[k] || 0) + 1; });
+      return { date, total_marked: data.length, by_status: counts };
     },
   },
 
@@ -228,12 +274,22 @@ const TOOLS = {
     run: async ({ db, orgId, args }) => {
       const from = args.date_from || today();
       const to   = args.date_to   || today();
-      const [newReg, total] = await Promise.all([
-        orgFilter(db.from('patients').select('id', { count: 'exact', head: true }).eq('is_archived', false)
-          .gte('created_at', `${from}T00:00:00`).lte('created_at', `${to}T23:59:59`), orgId),
-        orgFilter(db.from('patients').select('id', { count: 'exact', head: true }).eq('is_archived', false), orgId),
+      
+      const newParams = [`${from}T00:00:00`, `${to}T23:59:59`];
+      const newSQL = orgFilterSQL('SELECT COUNT(*) FROM patients WHERE is_archived = false AND created_at >= $1 AND created_at <= $2', orgId, newParams);
+      
+      const totalParams = [];
+      const totalSQL = orgFilterSQL('SELECT COUNT(*) FROM patients WHERE is_archived = false', orgId, totalParams);
+
+      const [newRes, totalRes] = await Promise.all([
+        db.query(newSQL, newParams),
+        db.query(totalSQL, totalParams),
       ]);
-      return { period: { from, to }, new_registrations: newReg.count || 0, total_active_patients: total.count || 0 };
+      return { 
+        period: { from, to }, 
+        new_registrations: parseInt(newRes.rows[0].count || 0), 
+        total_active_patients: parseInt(totalRes.rows[0].count || 0) 
+      };
     },
   },
 
@@ -250,11 +306,13 @@ const TOOLS = {
     run: async ({ db, orgId, args }) => {
       const from = args.date_from || today();
       const to   = args.date_to   || today();
-      const { data } = await orgFilter(
-        db.from('lab_orders').select('status').gte('ordered_at', `${from}T00:00:00`).lte('ordered_at', `${to}T23:59:59`), orgId);
+      const params = [`${from}T00:00:00`, `${to}T23:59:59`];
+      const sql = orgFilterSQL('SELECT status FROM lab_orders WHERE ordered_at >= $1 AND ordered_at <= $2', orgId, params);
+      const res = await db.query(sql, params);
+      const data = res.rows || [];
       const counts = {};
-      (data || []).forEach(r => { const k = r.status || 'unknown'; counts[k] = (counts[k] || 0) + 1; });
-      return { period: { from, to }, total_orders: (data || []).length, by_status: counts };
+      data.forEach(r => { const k = r.status || 'unknown'; counts[k] = (counts[k] || 0) + 1; });
+      return { period: { from, to }, total_orders: data.length, by_status: counts };
     },
   },
 
@@ -267,11 +325,13 @@ const TOOLS = {
     },
     run: async ({ db, orgId, args }) => {
       const month = args.pay_month || new Date().toISOString().slice(0, 7);
-      const { data } = await orgFilter(
-        db.from('payroll_records').select('gross_salary, net_salary, status').eq('pay_month', month), orgId);
+      const params = [month];
+      const sql = orgFilterSQL('SELECT gross_salary, net_salary, status FROM payroll_records WHERE pay_month = $1', orgId, params);
+      const res = await db.query(sql, params);
+      const data = res.rows || [];
       return {
         pay_month: month,
-        payslips: (data || []).length,
+        payslips: data.length,
         total_gross: sum(data, 'gross_salary'),
         total_net: sum(data, 'net_salary'),
         currency: 'INR',
@@ -284,8 +344,11 @@ const TOOLS = {
     description: 'List configured work shifts with their timings. Use for shift-management questions.',
     parameters: { type: 'object', properties: {} },
     run: async ({ db, orgId }) => {
-      const { data } = await orgFilter(db.from('shifts').select('shift_name, start_time, end_time, days_of_week'), orgId);
-      return { shifts: (data || []).map(s => ({ name: s.shift_name, start: s.start_time, end: s.end_time, days: s.days_of_week })) };
+      const params = [];
+      const sql = orgFilterSQL('SELECT shift_name, start_time, end_time, days_of_week FROM shifts', orgId, params);
+      const res = await db.query(sql, params);
+      const data = res.rows || [];
+      return { shifts: data.map(s => ({ name: s.shift_name, start: s.start_time, end: s.end_time, days: s.days_of_week })) };
     },
   },
 

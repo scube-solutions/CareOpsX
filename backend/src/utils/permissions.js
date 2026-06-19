@@ -5,7 +5,7 @@
 // table only stores OVERRIDES; getEffectivePermissions merges defaults with any
 // per-org override rows. Admin (1) and Super Admin (9) bypass all checks.
 // ─────────────────────────────────────────────────────────────────────────────
-const supabase = require('./supabase');
+const db = require('./db');
 
 const MODULES = ['reception', 'opd', 'ipd', 'laboratory', 'pharmacy', 'billing', 'hrms', 'reports'];
 const ACTIONS = ['view', 'create', 'edit', 'delete', 'approve'];
@@ -76,12 +76,11 @@ const getEffectivePermissions = async (organizationId, roleId) => {
   if (FULL_ACCESS_ROLES.includes(Number(roleId))) return grid(MODULES.reduce((a, m) => ({ ...a, [m]: 'all' }), {}));
   const base = JSON.parse(JSON.stringify(DEFAULT_PERMISSIONS[roleId] || emptyGrid()));
   if (!organizationId) return base;
-  const { data } = await supabase
-    .from('role_permissions')
-    .select('module, can_view, can_create, can_edit, can_delete, can_approve')
-    .eq('organization_id', organizationId)
-    .eq('role_id', roleId);
-  (data || []).forEach(row => applyOverride(base, row));
+  const result = await db.query(
+    'SELECT module, can_view, can_create, can_edit, can_delete, can_approve FROM role_permissions WHERE organization_id = $1 AND role_id = $2',
+    [organizationId, roleId]
+  );
+  (result.rows || []).forEach(row => applyOverride(base, row));
   return base;
 };
 

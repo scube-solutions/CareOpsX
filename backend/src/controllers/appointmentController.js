@@ -31,7 +31,7 @@ const generateBookingId = () => {
 ───────────────────────────────────────── */
 const setAvailability = async (req, res) => {
   try {
-    const supabase = req.db;
+    const db = req.db;
     const { id } = req.params;
     const { working_days, start_time, end_time, slot_duration } = req.body;
 
@@ -39,20 +39,17 @@ const setAvailability = async (req, res) => {
       return res.status(400).json({ error: 'working_days, start_time, end_time and slot_duration are required' });
     }
 
-    const { data, error } = await supabase
-      .from('doctor_availability')
-      .upsert({
-        doctor_id     : id,
-        working_days,        // array e.g. ["Monday","Tuesday","Wednesday"]
-        start_time,          // e.g. "09:00"
-        end_time,            // e.g. "17:00"
-        slot_duration,       // minutes e.g. 15
-        updated_at    : new Date().toISOString()
-      }, { onConflict: 'doctor_id' })
-      .select()
-      .single();
-
-    if (error) throw error;
+    const result = await db.query(
+      `INSERT INTO doctor_availability (doctor_id, working_days, start_time, end_time, slot_duration, updated_at)
+       VALUES ($1, $2, $3, $4, $5, $6)
+       ON CONFLICT (doctor_id) 
+       DO UPDATE SET working_days = EXCLUDED.working_days, start_time = EXCLUDED.start_time, 
+                     end_time = EXCLUDED.end_time, slot_duration = EXCLUDED.slot_duration, 
+                     updated_at = EXCLUDED.updated_at
+       RETURNING *`,
+      [id, working_days, start_time, end_time, slot_duration, new Date().toISOString()]
+    );
+    const data = result.rows[0];
 
     return res.status(200).json({
       message : 'Availability updated successfully',
@@ -71,16 +68,11 @@ const setAvailability = async (req, res) => {
 ───────────────────────────────────────── */
 const getAvailability = async (req, res) => {
   try {
-    const supabase = req.db;
+    const db = req.db;
     const { id } = req.params;
 
-    const { data, error } = await supabase
-      .from('doctor_availability')
-      .select('*')
-      .eq('doctor_id', id)
-      .single();
-
-    if (error && error.code !== 'PGRST116') throw error;
+    const result = await db.query('SELECT * FROM doctor_availability WHERE doctor_id = $1 LIMIT 1', [id]);
+    const data = result.rows[0];
 
     return res.status(200).json({ data: data || null });
 
@@ -96,32 +88,26 @@ const getAvailability = async (req, res) => {
 ───────────────────────────────────────── */
 const getSlots = async (req, res) => {
   try {
-    const supabase = req.db;
+    const db = req.db;
     const { doctor_id, date } = req.query;
 
     if (!doctor_id || !date) {
       return res.status(400).json({ error: 'doctor_id and date are required' });
     }
 
-    // Get doctor availability config
-    const { data: avail, error: availError } = await supabase
-      .from('doctor_availability')
-      .select('*')
-      .eq('doctor_id', doctor_id)
-      .single();
+    const availResult = await db.query('SELECT * FROM doctor_availability WHERE doctor_id = $1 LIMIT 1', [doctor_id]);
+    const avail = availResult.rows[0];
 
-    if (availError || !avail) {
+    if (!avail) {
       return res.status(404).json({ error: 'Doctor availability not configured' });
     }
 
-    // Check if selected date is a working day
     const dayName = new Date(date).toLocaleDateString('en-US', { weekday: 'long' });
     if (!avail.working_days.includes(dayName)) {
       return res.status(200).json({ slots: [], message: 'Doctor not available on this day' });
     }
 
-    // Generate all slots for the day
-    const slots    = [];
+    const slots = [];
     const [startH, startM] = avail.start_time.split(':').map(Number);
     const [endH,   endM]   = avail.end_time.split(':').map(Number);
     const startMins = startH * 60 + startM;
@@ -133,26 +119,19 @@ const getSlots = async (req, res) => {
       slots.push(`${hh}:${mm}`);
     }
 
-    // Get already booked slots for this doctor on this date
-    const { data: booked } = await supabase
-      .from('appointments')
-      .select('appointment_time')
-      .eq('doctor_id', doctor_id)
-      .eq('appointment_date', date)
-      .in('status', ['booked', 'confirmed']);
+    const bookedResult = await db.query(
+      `SELECT appointment_time FROM appointments 
+       WHERE doctor_id = $1 AND appointment_date = $2 AND status IN ('booked', 'confirmed')`,
+      [doctor_id, date]
+    );
+    const bookedTimes = new Set(bookedResult.rows.map(b => toHHMM(b.appointment_time)));
 
-    const bookedTimes = new Set((booked || []).map(b => toHHMM(b.appointment_time)));
+    const blockedResult = await db.query(
+      'SELECT blocked_time FROM doctor_blocked_slots WHERE doctor_id = $1 AND blocked_date = $2',
+      [doctor_id, date]
+    );
+    const blockedTimes = new Set(blockedResult.rows.map(b => String(b.blocked_time).slice(0, 5)));
 
-    // Get doctor-blocked slots for this date
-    const { data: blocked } = await supabase
-      .from('doctor_blocked_slots')
-      .select('blocked_time')
-      .eq('doctor_id', doctor_id)
-      .eq('blocked_date', date);
-
-    const blockedTimes = new Set((blocked || []).map(b => String(b.blocked_time).slice(0, 5)));
-
-    // Mark each slot as available or not (booked or doctor-blocked)
     const result = slots.map(slot => ({
       time      : slot,
       available : !bookedTimes.has(slot) && !blockedTimes.has(slot)
@@ -172,7 +151,7 @@ const getSlots = async (req, res) => {
 ───────────────────────────────────────── */
 const bookAppointment = async (req, res) => {
   try {
-    const supabase = req.db;
+    const db = req.db;
     let { patient_id, doctor_id, appointment_date, appointment_time, reason } = req.body;
     const organizationId = getUserOrganizationId(req);
 
@@ -180,91 +159,96 @@ const bookAppointment = async (req, res) => {
       return res.status(400).json({ error: 'patient_id, doctor_id, appointment_date and appointment_time are required' });
     }
 
-    // patient_id may be a users.id — resolve to patients.id
-    const { data: patCheck } = await supabase.from('patients').select('id').eq('id', patient_id).maybeSingle();
+    const patCheckResult = await db.query('SELECT id FROM patients WHERE id = $1 LIMIT 1', [patient_id]);
+    let patCheck = patCheckResult.rows[0];
     if (!patCheck) {
-      const { data: patByUser } = await supabase.from('patients').select('id').eq('user_id', patient_id).maybeSingle();
+      const patByUserResult = await db.query('SELECT id FROM patients WHERE user_id = $1 LIMIT 1', [patient_id]);
+      const patByUser = patByUserResult.rows[0];
       if (patByUser) {
         patient_id = patByUser.id;
       } else {
-        // Auto-create patient record for this user
-        const { data: userRec } = await supabase.from('users').select('first_name, last_name, phone, email').eq('id', patient_id).maybeSingle();
-        const { data: newPat, error: patErr } = await supabase.from('patients').insert([{
-          user_id:    patient_id,
-          first_name: req.body.patient_name ? req.body.patient_name.split(' ')[0] : (userRec?.first_name || 'Patient'),
-          last_name:  req.body.patient_name ? req.body.patient_name.split(' ').slice(1).join(' ') : (userRec?.last_name || ''),
-          phone:      req.body.patient_phone || userRec?.phone || null,
-          email:      userRec?.email || null,
-          created_at: new Date().toISOString(),
-        }]).select('id').single();
-        if (patErr) return res.status(400).json({ error: 'Could not resolve patient record: ' + patErr.message });
-        patient_id = newPat.id;
+        const userRecResult = await db.query('SELECT first_name, last_name, phone, email FROM users WHERE id = $1 LIMIT 1', [patient_id]);
+        const userRec = userRecResult.rows[0];
+        
+        const firstName = req.body.patient_name ? req.body.patient_name.split(' ')[0] : (userRec?.first_name || 'Patient');
+        const lastName = req.body.patient_name ? req.body.patient_name.split(' ').slice(1).join(' ') : (userRec?.last_name || '');
+        const phone = req.body.patient_phone || userRec?.phone || null;
+        const email = userRec?.email || null;
+
+        const newPatResult = await db.query(
+          `INSERT INTO patients (user_id, first_name, last_name, phone, email, organization_id, created_at)
+           VALUES ($1, $2, $3, $4, $5, $6, $7)
+           RETURNING id`,
+          [patient_id, firstName, lastName, phone, email, organizationId || null, new Date().toISOString()]
+        );
+        patient_id = newPatResult.rows[0].id;
       }
     }
 
-    // Check slot is still available
-    const { data: existing } = await supabase
-      .from('appointments')
-      .select('id')
-      .eq('doctor_id', doctor_id)
-      .eq('appointment_date', appointment_date)
-      .eq('appointment_time', toDbDateTime(appointment_date, appointment_time))
-      .in('status', ['booked', 'confirmed'])
-      .single();
-
-    if (existing) {
+    const dbDateTime = toDbDateTime(appointment_date, appointment_time);
+    const existingResult = await db.query(
+      `SELECT id FROM appointments 
+       WHERE doctor_id = $1 AND appointment_date = $2 AND appointment_time = $3 AND status IN ('booked', 'confirmed') 
+       LIMIT 1`,
+      [doctor_id, appointment_date, dbDateTime]
+    );
+    if (existingResult.rows[0]) {
       return res.status(409).json({ error: 'This slot is already booked. Please choose another.' });
     }
 
     const booking_id = generateBookingId();
 
-    // Token = position in queue for this doctor on this date
-    const { count: existingCount } = await supabase
-      .from('appointments')
-      .select('id', { count: 'exact', head: true })
-      .eq('doctor_id', doctor_id)
-      .eq('appointment_date', appointment_date)
-      .in('status', ['booked', 'confirmed']);
-    const token_number = (existingCount || 0) + 1;
+    const countResult = await db.query(
+      `SELECT COUNT(*)::int FROM appointments 
+       WHERE doctor_id = $1 AND appointment_date = $2 AND status IN ('booked', 'confirmed')`,
+      [doctor_id, appointment_date]
+    );
+    const token_number = (countResult.rows[0].count || 0) + 1;
 
-    const { data, error } = await supabase
-      .from('appointments')
-      .insert([{
-        patient_id,
-        doctor_id,
-        appointment_date,
-        appointment_time: toDbDateTime(appointment_date, appointment_time),
-        reason       : reason || null,
-        booking_id,
-        token_number,
-        status       : 'booked',
-        organization_id: organizationId || null,
-        created_at   : new Date().toISOString()
-      }])
-      .select()
-      .single();
-
-    if (error) {
-      if (error.code === '23505') {
+    let data;
+    try {
+      const insertResult = await db.query(
+        `INSERT INTO appointments (patient_id, doctor_id, appointment_date, appointment_time, reason, booking_id, token_number, status, organization_id, created_at)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+         RETURNING *`,
+        [
+          patient_id,
+          doctor_id,
+          appointment_date,
+          dbDateTime,
+          reason || null,
+          booking_id,
+          token_number,
+          'booked',
+          organizationId || null,
+          new Date().toISOString()
+        ]
+      );
+      data = insertResult.rows[0];
+    } catch (insertErr) {
+      if (insertErr.code === '23505') {
         return res.status(409).json({ error: 'This slot is already booked. Please choose another.' });
       }
-      throw error;
+      throw insertErr;
     }
 
-    // Fire-and-forget notifications
     const [patientRes, doctorRes] = await Promise.all([
-      supabase.from('patients').select('first_name, last_name, phone, email').eq('id', patient_id).single(),
-      supabase.from('doctors').select('specialization, user_id').eq('id', doctor_id).single(),
+      db.query('SELECT first_name, last_name, phone, email FROM patients WHERE id = $1 LIMIT 1', [patient_id]),
+      db.query('SELECT specialization, user_id FROM doctors WHERE id = $1 LIMIT 1', [doctor_id])
     ]);
 
-    const patientName = `${patientRes.data?.first_name || ''} ${patientRes.data?.last_name || ''}`.trim() || 'Patient';
-    const patientPhone = patientRes.data?.phone || null;
-    const patientEmail = patientRes.data?.email || null;
-    const specialty = doctorRes.data?.specialization || 'General';
+    const patient = patientRes.rows[0];
+    const doctor = doctorRes.rows[0];
+
+    const patientName = `${patient?.first_name || ''} ${patient?.last_name || ''}`.trim() || 'Patient';
+    const patientPhone = patient?.phone || null;
+    const patientEmail = patient?.email || null;
+    const specialty = doctor?.specialization || 'General';
 
     let doctorName = 'Doctor';
-    if (doctorRes.data?.user_id) {
-      const { data: du } = await supabase.from('users').select('first_name, last_name').eq('id', doctorRes.data.user_id).single();
+    if (doctor?.user_id) {
+      const userRes = await db.query('SELECT first_name, last_name FROM users WHERE id = $1 LIMIT 1', [doctor.user_id]);
+      const du = userRes.rows[0];
       if (du) doctorName = `${du.first_name || ''} ${du.last_name || ''}`.trim() || 'Doctor';
     }
 
@@ -297,7 +281,7 @@ const bookAppointment = async (req, res) => {
 ───────────────────────────────────────── */
 const getAppointments = async (req, res) => {
   try {
-    const supabase = req.db;
+    const db = req.db;
     const { date, doctor_id, status, date_from, date_to } = req.query;
     const limit  = Math.min(Number(req.query.limit)  || 50, 200);
     const offset = Number(req.query.offset) || 0;
@@ -309,59 +293,82 @@ const getAppointments = async (req, res) => {
     const isDoctor  = userRoles.includes(2) && !isAdmin;
     const isPatient = userRoles.includes(3) && !isAdmin;
 
-    let query = supabase
-      .from('appointments')
-      .select('*')
-      .order('appointment_date', { ascending: true })
-      .order('appointment_time', { ascending: true })
-      .range(offset, offset + limit - 1);
+    let queryText = 'SELECT * FROM appointments';
+    const conditions = [];
+    const params = [];
 
-    if (organizationId) query = query.eq('organization_id', organizationId);
+    if (organizationId) {
+      params.push(organizationId);
+      conditions.push(`organization_id = $${params.length}`);
+    }
 
     if (isPatient) {
-      const { data: patRec, error: patErr } = await supabase
-        .from('patients').select('id').eq('user_id', req.user.id).single();
-      if (patErr || !patRec) return res.status(404).json({ error: 'Patient profile not found' });
-      query = query.eq('patient_id', patRec.id);
+      const patResult = await db.query('SELECT id FROM patients WHERE user_id = $1 LIMIT 1', [req.user.id]);
+      const patRec = patResult.rows[0];
+      if (!patRec) return res.status(404).json({ error: 'Patient profile not found' });
+      
+      params.push(patRec.id);
+      conditions.push(`patient_id = $${params.length}`);
     }
 
     if (isDoctor) {
-      const { data: docRec } = await supabase
-        .from('doctors').select('id').eq('user_id', req.user.id).single();
-      if (docRec) query = query.eq('doctor_id', docRec.id);
+      const docResult = await db.query('SELECT id FROM doctors WHERE user_id = $1 LIMIT 1', [req.user.id]);
+      const docRec = docResult.rows[0];
+      if (docRec) {
+        params.push(docRec.id);
+        conditions.push(`doctor_id = $${params.length}`);
+      }
     }
 
-    if (date)                   query = query.eq('appointment_date', date);
-    if (doctor_id && !isDoctor) query = query.eq('doctor_id', doctor_id);
-    if (status)                 query = query.eq('status', status);
-    if (date_from)              query = query.gte('appointment_date', date_from);
-    if (date_to)                query = query.lte('appointment_date', date_to);
+    if (date) {
+      params.push(date);
+      conditions.push(`appointment_date = $${params.length}`);
+    }
+    if (doctor_id && !isDoctor) {
+      params.push(doctor_id);
+      conditions.push(`doctor_id = $${params.length}`);
+    }
+    if (status) {
+      params.push(status);
+      conditions.push(`status = $${params.length}`);
+    }
+    if (date_from) {
+      params.push(date_from);
+      conditions.push(`appointment_date >= $${params.length}`);
+    }
+    if (date_to) {
+      params.push(date_to);
+      conditions.push(`appointment_date <= $${params.length}`);
+    }
 
-    const { data, error } = await query;
-    if (error) throw error;
+    if (conditions.length > 0) {
+      queryText += ' WHERE ' + conditions.join(' AND ');
+    }
 
-    const rows = data || [];
+    queryText += ' ORDER BY appointment_date ASC, appointment_time ASC LIMIT $' + (params.length + 1) + ' OFFSET $' + (params.length + 2);
+    params.push(limit, offset);
 
-    // Attach patients separately
+    const result = await db.query(queryText, params);
+    const rows = result.rows || [];
+
     const patientIds = [...new Set(rows.map(a => a.patient_id).filter(Boolean))];
     const patientMap = {};
     if (patientIds.length) {
-      const { data: patients } = await supabase.from('patients').select('id, first_name, last_name, phone, email').in('id', patientIds);
-      (patients || []).forEach(p => { patientMap[p.id] = p; });
+      const patientsResult = await db.query('SELECT id, first_name, last_name, phone, email FROM patients WHERE id = ANY($1)', [patientIds]);
+      patientsResult.rows.forEach(p => { patientMap[p.id] = p; });
     }
 
-    // Attach doctor names separately (avoid multiple-relationship join error)
     const doctorIds = [...new Set(rows.map(a => a.doctor_id).filter(Boolean))];
     const doctorMap = {};
     if (doctorIds.length) {
-      const { data: doctors } = await supabase.from('doctors').select('id, user_id, specialization').in('id', doctorIds);
-      const userIds = [...new Set((doctors || []).map(d => d.user_id).filter(Boolean))];
+      const doctorsResult = await db.query('SELECT id, user_id, specialization FROM doctors WHERE id = ANY($1)', [doctorIds]);
+      const userIds = [...new Set((doctorsResult.rows || []).map(d => d.user_id).filter(Boolean))];
       const userMap = {};
       if (userIds.length) {
-        const { data: users } = await supabase.from('users').select('id, first_name, last_name').in('id', userIds);
-        (users || []).forEach(u => { userMap[u.id] = u; });
+        const usersResult = await db.query('SELECT id, first_name, last_name FROM users WHERE id = ANY($1)', [userIds]);
+        usersResult.rows.forEach(u => { userMap[u.id] = u; });
       }
-      (doctors || []).forEach(d => {
+      doctorsResult.rows.forEach(d => {
         doctorMap[d.id] = { specialization: d.specialization, users: userMap[d.user_id] || null };
       });
     }
@@ -387,7 +394,7 @@ const getAppointments = async (req, res) => {
 ───────────────────────────────────────── */
 const updateStatus = async (req, res) => {
   try {
-    const supabase = req.db;
+    const db = req.db;
     const { id }     = req.params;
     const { status } = req.body;
     const organizationId = getUserOrganizationId(req);
@@ -397,11 +404,18 @@ const updateStatus = async (req, res) => {
       return res.status(400).json({ error: `Status must be one of: ${allowed.join(', ')}` });
     }
 
-    let existingQuery = supabase.from('appointments').select('id, status, booking_id, appointment_date, appointment_time').eq('id', id);
-    if (organizationId) existingQuery = existingQuery.eq('organization_id', organizationId);
-    const { data: existingAppt, error: existingErr } = await existingQuery.single();
+    let existingQueryText = 'SELECT id, status, booking_id, appointment_date, appointment_time FROM appointments WHERE id = $1';
+    const params = [id];
+    if (organizationId) {
+      params.push(organizationId);
+      existingQueryText += ' AND organization_id = $2';
+    }
+    existingQueryText += ' LIMIT 1';
 
-    if (existingErr || !existingAppt) {
+    const existingResult = await db.query(existingQueryText, params);
+    const existingAppt = existingResult.rows[0];
+
+    if (!existingAppt) {
       return res.status(404).json({ error: 'Appointment not found' });
     }
 
@@ -419,40 +433,34 @@ const updateStatus = async (req, res) => {
       });
     }
 
-    const { data, error } = await supabase
-      .from('appointments')
-      .update({ status })
-      .eq('id', id)
-      .select()
-      .single();
-
-    if (error) throw error;
+    const updateResult = await db.query(
+      'UPDATE appointments SET status = $1 WHERE id = $2 RETURNING *',
+      [status, id]
+    );
+    const data = updateResult.rows[0];
 
     if (status === 'cancelled') {
-      const { data: joined } = await supabase
-        .from('appointments')
-        .select(`
-          booking_id,
-          appointment_date,
-          appointment_time,
-          patients ( * ),
-          doctors ( users ( first_name, last_name, name ) )
-        `)
-        .eq('id', id)
-        .single();
+      const joinedResult = await db.query(
+        `SELECT a.booking_id, a.appointment_date, a.appointment_time,
+                p.first_name as pat_first_name, p.last_name as pat_last_name, p.phone as pat_phone, p.email as pat_email,
+                u.first_name as doc_first_name, u.last_name as doc_last_name
+         FROM appointments a
+         LEFT JOIN patients p ON a.patient_id = p.id
+         LEFT JOIN doctors d ON a.doctor_id = d.id
+         LEFT JOIN users u ON d.user_id = u.id
+         WHERE a.id = $1 LIMIT 1`,
+        [id]
+      );
+      const joined = joinedResult.rows[0];
 
       if (joined) {
-        const doctorName =
-          `${joined.doctors?.users?.first_name || ''} ${joined.doctors?.users?.last_name || ''}`.trim() ||
-          joined.doctors?.users?.name ||
-          'Doctor';
+        const doctorName = `${joined.doc_first_name || ''} ${joined.doc_last_name || ''}`.trim() || 'Doctor';
+        const patientName = `${joined.pat_first_name || ''} ${joined.pat_last_name || ''}`.trim() || 'Patient';
 
         notifyBookingCancelled({
-          patientName:
-            joined.patients?.name ||
-            `${joined.patients?.first_name || ''} ${joined.patients?.last_name || ''}`.trim(),
-          patientPhone: joined.patients?.phone,
-          patientEmail: joined.patients?.email,
+          patientName,
+          patientPhone: joined.pat_phone,
+          patientEmail: joined.pat_email,
           doctorName,
           date: joined.appointment_date,
           time: toHHMM(joined.appointment_time),
@@ -475,7 +483,7 @@ const updateStatus = async (req, res) => {
 ───────────────────────────────────────── */
 const rescheduleAppointment = async (req, res) => {
   try {
-    const supabase = req.db;
+    const db = req.db;
     const { id } = req.params;
     const { appointment_date, appointment_time } = req.body;
 
@@ -483,32 +491,26 @@ const rescheduleAppointment = async (req, res) => {
       return res.status(400).json({ error: 'New appointment_date and appointment_time are required' });
     }
 
-    // Check new slot is available
-    const { data: existing } = await supabase
-      .from('appointments')
-      .select('id')
-      .eq('doctor_id', req.body.doctor_id)
-      .eq('appointment_date', appointment_date)
-      .eq('appointment_time', toDbDateTime(appointment_date, appointment_time))
-      .in('status', ['booked', 'confirmed'])
-      .single();
+    const dbDateTime = toDbDateTime(appointment_date, appointment_time);
+    const existingResult = await db.query(
+      `SELECT id FROM appointments 
+       WHERE doctor_id = $1 AND appointment_date = $2 AND appointment_time = $3 AND status IN ('booked', 'confirmed')
+       LIMIT 1`,
+      [req.body.doctor_id, appointment_date, dbDateTime]
+    );
 
-    if (existing) {
+    if (existingResult.rows[0]) {
       return res.status(409).json({ error: 'New slot is already booked. Please choose another.' });
     }
 
-    const { data, error } = await supabase
-      .from('appointments')
-      .update({
-        appointment_date,
-        appointment_time: toDbDateTime(appointment_date, appointment_time),
-        status: 'booked'
-      })
-      .eq('id', id)
-      .select()
-      .single();
-
-    if (error) throw error;
+    const result = await db.query(
+      `UPDATE appointments SET appointment_date = $1, appointment_time = $2, status = 'booked' 
+       WHERE id = $3 
+       RETURNING *`,
+      [appointment_date, dbDateTime, id]
+    );
+    const data = result.rows[0];
+    if (!data) return res.status(404).json({ error: 'Appointment not found' });
 
     return res.status(200).json({
       message: 'Appointment rescheduled',
@@ -527,27 +529,37 @@ const rescheduleAppointment = async (req, res) => {
 ───────────────────────────────────────── */
 const getAppointmentById = async (req, res) => {
   try {
-    const supabase = req.db;
+    const db = req.db;
     const { id } = req.params;
     const organizationId = getUserOrganizationId(req);
-    let apptQuery = supabase.from('appointments').select('*').eq('id', id);
-    if (organizationId) apptQuery = apptQuery.eq('organization_id', organizationId);
-    const { data, error } = await apptQuery.single();
+    
+    let apptQuery = 'SELECT * FROM appointments WHERE id = $1';
+    const params = [id];
+    if (organizationId) {
+      params.push(organizationId);
+      apptQuery += ' AND organization_id = $2';
+    }
+    apptQuery += ' LIMIT 1';
 
-    if (error || !data) return res.status(404).json({ error: 'Appointment not found' });
+    const apptResult = await db.query(apptQuery, params);
+    const data = apptResult.rows[0];
 
-    const { data: patient } = data.patient_id
-      ? await supabase.from('patients').select('id, first_name, last_name, phone, email, patient_uid').eq('id', data.patient_id).single()
-      : { data: null };
+    if (!data) return res.status(404).json({ error: 'Appointment not found' });
 
-    const { data: doctor } = data.doctor_id
-      ? await supabase.from('doctors').select('id, user_id, specialization').eq('id', data.doctor_id).single()
-      : { data: null };
+    const patientResult = data.patient_id
+      ? await db.query('SELECT id, first_name, last_name, phone, email, patient_uid FROM patients WHERE id = $1 LIMIT 1', [data.patient_id])
+      : { rows: [] };
+    const patient = patientResult.rows[0];
+
+    const doctorResult = data.doctor_id
+      ? await db.query('SELECT id, user_id, specialization FROM doctors WHERE id = $1 LIMIT 1', [data.doctor_id])
+      : { rows: [] };
+    const doctor = doctorResult.rows[0];
 
     let doctorUser = null;
     if (doctor?.user_id) {
-      const { data: u } = await supabase.from('users').select('first_name, last_name').eq('id', doctor.user_id).single();
-      doctorUser = u;
+      const userResult = await db.query('SELECT first_name, last_name FROM users WHERE id = $1 LIMIT 1', [doctor.user_id]);
+      doctorUser = userResult.rows[0];
     }
 
     let consultation = null;
@@ -555,15 +567,39 @@ const getAppointmentById = async (req, res) => {
     let labOrders = [];
 
     if (data.consultation_id) {
-      const { data: consult } = await supabase.from('consultations').select('*').eq('id', data.consultation_id).single();
-      consultation = consult;
+      const consultResult = await db.query('SELECT * FROM consultations WHERE id = $1 LIMIT 1', [data.consultation_id]);
+      consultation = consultResult.rows[0];
+      
       if (consultation) {
         const [presRes, labRes] = await Promise.all([
-          supabase.from('prescriptions').select('*, prescription_items(*)').eq('consultation_id', data.consultation_id),
-          supabase.from('lab_orders').select('*, lab_reports(*)').eq('consultation_id', data.consultation_id)
+          db.query('SELECT * FROM prescriptions WHERE consultation_id = $1', [data.consultation_id]),
+          db.query('SELECT * FROM lab_orders WHERE consultation_id = $1', [data.consultation_id])
         ]);
-        prescriptions = presRes.data || [];
-        labOrders = labRes.data || [];
+        
+        prescriptions = presRes.rows || [];
+        labOrders = labRes.rows || [];
+        
+        if (prescriptions.length > 0) {
+          const prescIds = prescriptions.map(p => p.id);
+          const itemsResult = await db.query('SELECT * FROM prescription_items WHERE prescription_id = ANY($1)', [prescIds]);
+          const itemsMap = {};
+          itemsResult.rows.forEach(item => {
+            if (!itemsMap[item.prescription_id]) itemsMap[item.prescription_id] = [];
+            itemsMap[item.prescription_id].push(item);
+          });
+          prescriptions = prescriptions.map(p => ({ ...p, prescription_items: itemsMap[p.id] || [] }));
+        }
+
+        if (labOrders.length > 0) {
+          const orderIds = labOrders.map(o => o.id);
+          const reportsResult = await db.query('SELECT * FROM lab_reports WHERE lab_order_id = ANY($1)', [orderIds]);
+          const reportsMap = {};
+          reportsResult.rows.forEach(report => {
+            if (!reportsMap[report.lab_order_id]) reportsMap[report.lab_order_id] = [];
+            reportsMap[report.lab_order_id].push(report);
+          });
+          labOrders = labOrders.map(o => ({ ...o, lab_reports: reportsMap[o.id] || [] }));
+        }
       }
     }
 

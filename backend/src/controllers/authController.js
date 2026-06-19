@@ -1,7 +1,7 @@
 const bcrypt   = require('bcryptjs');
 const jwt      = require('jsonwebtoken');
 const crypto   = require('crypto');
-const supabase = require('../utils/supabase');
+const db       = require('../utils/db');
 const { sendPasswordResetEmail, sendOtpEmail } = require('../utils/notify');
 const { auditLog } = require('../middlewares/audit');
 
@@ -29,7 +29,7 @@ const FRONTEND_URL = process.env.FRONTEND_URL || 'http://localhost:3000';
 
 /* ─────────────────────────────────────────
    REGISTER
-───────────────────────────────────────── */
+ ───────────────────────────────────────── */
 const register = async (req, res) => {
   try {
     const { first_name, last_name, email, phone, password, role_id, organization_id } = req.body;
@@ -46,11 +46,8 @@ const register = async (req, res) => {
     }
 
     // Check if email already exists
-    const { data: existing } = await supabase
-      .from('users')
-      .select('id')
-      .eq('email', email)
-      .single();
+    const existingResult = await db.query('SELECT id FROM users WHERE email = $1 LIMIT 1', [email]);
+    const existing = existingResult.rows[0];
 
     if (existing) {
       return res.status(409).json({ error: 'Email already registered' });
@@ -58,7 +55,8 @@ const register = async (req, res) => {
 
     // Mobile must be unique among login accounts (patients excluded — role 3).
     if (phone) {
-      const { data: dupPhone } = await supabase.from('users').select('id').eq('phone', phone).neq('role_id', 3).maybeSingle();
+      const dupPhoneResult = await db.query('SELECT id FROM users WHERE phone = $1 AND role_id != 3 LIMIT 1', [phone]);
+      const dupPhone = dupPhoneResult.rows[0];
       if (dupPhone) return res.status(409).json({ error: 'Mobile number already registered' });
     }
 
@@ -71,26 +69,26 @@ const register = async (req, res) => {
     const expiry = new Date(Date.now() + OTP_TTL_MS).toISOString();
 
     // Insert user — role_id 3 = patient by default, admin passes role_id manually
-    const { data: user, error } = await supabase
-      .from('users')
-      .insert([{
+    const userInsertResult = await db.query(
+      `INSERT INTO users (first_name, last_name, email, phone, password_hash, role_id, roles, organization_id, email_verified, otp_code, otp_expiry, otp_purpose)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+       RETURNING id, first_name, last_name, email, role_id, organization_id, created_at`,
+      [
         first_name,
         last_name,
         email,
-        phone        : phone || null,
+        phone || null,
         password_hash,
-        role_id      : primaryRole,
-        roles        : [primaryRole],
-        organization_id: primaryRole === SUPER_ADMIN_ROLE ? null : (organization_id || null),
-        email_verified: false,
-        otp_code      : otp,
-        otp_expiry    : expiry,
-        otp_purpose   : 'verification',
-      }])
-      .select('id, first_name, last_name, email, role_id, organization_id, created_at')
-      .single();
-
-    if (error) throw error;
+        primaryRole,
+        [primaryRole],
+        primaryRole === SUPER_ADMIN_ROLE ? null : (organization_id || null),
+        false,
+        otp,
+        expiry,
+        'verification'
+      ]
+    );
+    const user = userInsertResult.rows[0];
 
     // Send verification OTP (non-fatal)
     const sent = await sendOtpEmail(user.email, user.first_name, otp, 'verification');
@@ -112,7 +110,7 @@ const register = async (req, res) => {
 
 /* ─────────────────────────────────────────
    LOGIN
-───────────────────────────────────────── */
+ ───────────────────────────────────────── */
 const login = async (req, res) => {
   try {
     const { email, password } = req.body;
@@ -122,13 +120,14 @@ const login = async (req, res) => {
     }
 
     // Find user by email
-    const { data: user, error } = await supabase
-      .from('users')
-      .select('id, first_name, last_name, email, password_hash, role_id, roles, organization_id, email_verified, is_active, account_status, invite_status, failed_login_attempts, locked_until, two_factor_enabled')
-      .eq('email', email)
-      .single();
+    const userResult = await db.query(
+      `SELECT id, first_name, last_name, email, password_hash, role_id, roles, organization_id, email_verified, is_active, account_status, invite_status, failed_login_attempts, locked_until, two_factor_enabled 
+       FROM users WHERE email = $1 LIMIT 1`,
+      [email]
+    );
+    const user = userResult.rows[0];
 
-    if (error || !user) {
+    if (!user) {
       return res.status(401).json({ error: 'Invalid email or password' });
     }
 
@@ -143,10 +142,10 @@ const login = async (req, res) => {
     if (!valid) {
       const attempts = (user.failed_login_attempts || 0) + 1;
       const lock = attempts >= MAX_FAILED_ATTEMPTS;
-      await supabase.from('users').update({
-        failed_login_attempts: lock ? 0 : attempts,
-        locked_until: lock ? new Date(Date.now() + LOCK_MS).toISOString() : null,
-      }).eq('id', user.id);
+      await db.query(
+        'UPDATE users SET failed_login_attempts = $1, locked_until = $2 WHERE id = $3',
+        [lock ? 0 : attempts, lock ? new Date(Date.now() + LOCK_MS).toISOString() : null, user.id]
+      );
       await auditLog({ user_id: user.id, role_id: user.role_id, organization_id: user.organization_id || null,
         action: lock ? 'ACCOUNT_LOCKED' : 'FAILED_LOGIN', module: 'Auth', entity_type: 'user', entity_id: user.id,
         description: `Failed login (${attempts}/${MAX_FAILED_ATTEMPTS})${lock ? ' — account locked 15m' : ''}` });
@@ -164,14 +163,14 @@ const login = async (req, res) => {
 
     // Reset failed-attempt counter on a valid password.
     if (user.failed_login_attempts) {
-      await supabase.from('users').update({ failed_login_attempts: 0, locked_until: null }).eq('id', user.id);
+      await db.query('UPDATE users SET failed_login_attempts = 0, locked_until = NULL WHERE id = $1', [user.id]);
     }
 
     // Optional two-factor: issue an email OTP and require verify-otp before token.
     if (user.two_factor_enabled) {
       const otp = genOtp();
       const expiry = new Date(Date.now() + OTP_TTL_MS).toISOString();
-      await supabase.from('users').update({ otp_code: otp, otp_expiry: expiry, otp_purpose: 'login' }).eq('id', user.id);
+      await db.query('UPDATE users SET otp_code = $1, otp_expiry = $2, otp_purpose = \'login\' WHERE id = $3', [otp, expiry, user.id]);
       await sendOtpEmail(user.email, user.first_name, otp, 'login');
       return res.status(200).json({ requires_2fa: true, email: user.email, message: 'A verification code has been sent to your email.' });
     }
@@ -201,7 +200,7 @@ const login = async (req, res) => {
       { expiresIn: '7d' }
     );
 
-    await supabase.from('users').update({ last_login_at: new Date().toISOString() }).eq('id', user.id);
+    await db.query('UPDATE users SET last_login_at = $1 WHERE id = $2', [new Date().toISOString(), user.id]);
     await auditLog({ user_id: user.id, role_id: user.role_id, organization_id: user.organization_id || null,
       action: 'LOGIN', module: 'Auth', entity_type: 'user', entity_id: user.id, description: 'Successful login' });
 
@@ -228,17 +227,14 @@ const login = async (req, res) => {
 
 /* ─────────────────────────────────────────
    FORGOT PASSWORD
-───────────────────────────────────────── */
+ ───────────────────────────────────────── */
 const forgotPassword = async (req, res) => {
   try {
     const { email } = req.body;
     if (!email) return res.status(400).json({ error: 'Email is required' });
 
-    const { data: user } = await supabase
-      .from('users')
-      .select('id, first_name, email')
-      .eq('email', email)
-      .single();
+    const userResult = await db.query('SELECT id, first_name, email FROM users WHERE email = $1 LIMIT 1', [email]);
+    const user = userResult.rows[0];
 
     // Always return 200 — don't leak whether email exists
     if (!user) return res.json({ message: 'If that email is registered, a reset link has been sent.' });
@@ -246,12 +242,7 @@ const forgotPassword = async (req, res) => {
     const token  = crypto.randomBytes(32).toString('hex');
     const expiry = new Date(Date.now() + 60 * 60 * 1000).toISOString(); // 1 hour
 
-    const { error: updateErr } = await supabase.from('users').update({
-      reset_token        : token,
-      reset_token_expiry : expiry,
-    }).eq('id', user.id);
-
-    if (updateErr) throw updateErr;
+    await db.query('UPDATE users SET reset_token = $1, reset_token_expiry = $2 WHERE id = $3', [token, expiry, user.id]);
 
     const resetUrl = `${FRONTEND_URL}/reset-password?token=${token}`;
     await sendPasswordResetEmail(user.email, user.first_name, resetUrl);
@@ -265,18 +256,18 @@ const forgotPassword = async (req, res) => {
 
 /* ─────────────────────────────────────────
    RESET PASSWORD
-───────────────────────────────────────── */
+ ───────────────────────────────────────── */
 const resetPassword = async (req, res) => {
   try {
     const { token, new_password } = req.body;
     if (!token || !new_password) return res.status(400).json({ error: 'token and new_password are required' });
     if (new_password.length < 6)  return res.status(400).json({ error: 'Password must be at least 6 characters' });
 
-    const { data: user } = await supabase
-      .from('users')
-      .select('id, role_id, organization_id, reset_token, reset_token_expiry')
-      .eq('reset_token', token)
-      .single();
+    const userResult = await db.query(
+      'SELECT id, role_id, organization_id, reset_token, reset_token_expiry FROM users WHERE reset_token = $1 LIMIT 1',
+      [token]
+    );
+    const user = userResult.rows[0];
 
     if (!user) return res.status(400).json({ error: 'Invalid or expired reset link' });
     if (!user.reset_token_expiry || new Date(user.reset_token_expiry) < new Date()) {
@@ -284,13 +275,12 @@ const resetPassword = async (req, res) => {
     }
 
     const password_hash = await bcrypt.hash(new_password, 10);
-    await supabase.from('users').update({
-      password_hash,
-      reset_token        : null,
-      reset_token_expiry : null,
-      failed_login_attempts: 0,
-      locked_until       : null,
-    }).eq('id', user.id);
+    await db.query(
+      `UPDATE users 
+       SET password_hash = $1, reset_token = NULL, reset_token_expiry = NULL, failed_login_attempts = 0, locked_until = NULL 
+       WHERE id = $2`,
+      [password_hash, user.id]
+    );
     await auditLog({ user_id: user.id, role_id: user.role_id || null, organization_id: user.organization_id || null,
       action: 'PASSWORD_RESET', module: 'Auth', entity_type: 'user', entity_id: user.id, description: 'Password reset via email' });
 
@@ -303,19 +293,18 @@ const resetPassword = async (req, res) => {
 
 /* ─────────────────────────────────────────
    RESET PASSWORD via EMAIL OTP
-   (forgot-password OTP flow: send-otp purpose 'reset' → this)
-───────────────────────────────────────── */
+ ───────────────────────────────────────── */
 const resetPasswordWithOtp = async (req, res) => {
   try {
     const { email, otp, new_password } = req.body;
     if (!email || !otp || !new_password) return res.status(400).json({ error: 'email, otp and new_password are required' });
     if (new_password.length < 6) return res.status(400).json({ error: 'Password must be at least 6 characters' });
 
-    const { data: user } = await supabase
-      .from('users')
-      .select('id, role_id, organization_id, otp_code, otp_expiry, otp_purpose')
-      .eq('email', email)
-      .single();
+    const userResult = await db.query(
+      'SELECT id, role_id, organization_id, otp_code, otp_expiry, otp_purpose FROM users WHERE email = $1 LIMIT 1',
+      [email]
+    );
+    const user = userResult.rows[0];
 
     if (!user) return res.status(404).json({ error: 'No account found with this email' });
     if (!user.otp_code || user.otp_code !== String(otp)) return res.status(400).json({ error: 'Invalid OTP' });
@@ -323,10 +312,12 @@ const resetPasswordWithOtp = async (req, res) => {
     if (user.otp_purpose && user.otp_purpose !== 'reset') return res.status(400).json({ error: 'OTP purpose mismatch' });
 
     const password_hash = await bcrypt.hash(new_password, 10);
-    await supabase.from('users').update({
-      password_hash, otp_code: null, otp_expiry: null, otp_purpose: null,
-      failed_login_attempts: 0, locked_until: null,
-    }).eq('id', user.id);
+    await db.query(
+      `UPDATE users 
+       SET password_hash = $1, otp_code = NULL, otp_expiry = NULL, otp_purpose = NULL, failed_login_attempts = 0, locked_until = NULL 
+       WHERE id = $2`,
+      [password_hash, user.id]
+    );
     await auditLog({ user_id: user.id, role_id: user.role_id || null, organization_id: user.organization_id || null,
       action: 'PASSWORD_RESET', module: 'Auth', entity_type: 'user', entity_id: user.id, description: 'Password reset via email OTP' });
 
@@ -344,14 +335,15 @@ const changePassword = async (req, res) => {
     if (!current_password || !new_password) return res.status(400).json({ error: 'current_password and new_password are required' });
     if (new_password.length < 8) return res.status(400).json({ error: 'New password must be at least 8 characters' });
 
-    const { data: user, error } = await supabase.from('users').select('id, password_hash').eq('id', req.user.id).single();
-    if (error || !user) return res.status(404).json({ error: 'User not found' });
+    const userResult = await req.db.query('SELECT id, password_hash FROM users WHERE id = $1 LIMIT 1', [req.user.id]);
+    const user = userResult.rows[0];
+    if (!user) return res.status(404).json({ error: 'User not found' });
 
     const valid = await bcrypt.compare(current_password, user.password_hash);
     if (!valid) return res.status(401).json({ error: 'Current password is incorrect' });
 
     const password_hash = await bcrypt.hash(new_password, 10);
-    await supabase.from('users').update({ password_hash, updated_at: new Date().toISOString() }).eq('id', user.id);
+    await req.db.query('UPDATE users SET password_hash = $1, updated_at = $2 WHERE id = $3', [password_hash, new Date().toISOString(), user.id]);
     await auditLog({ user_id: user.id, role_id: req.user.role_id, organization_id: req.user.organization_id || null,
       action: 'PASSWORD_CHANGED', module: 'Auth', entity_type: 'user', entity_id: user.id, description: 'User changed own password' });
 
@@ -364,7 +356,7 @@ const changePassword = async (req, res) => {
 
 /* ─────────────────────────────────────────
    ADMIN / CLINIC SELF-REGISTRATION
-───────────────────────────────────────── */
+ ───────────────────────────────────────── */
 const adminRegister = async (req, res) => {
   try {
     const { email, display_name, org_name, phone, password, plan } = req.body;
@@ -380,9 +372,12 @@ const adminRegister = async (req, res) => {
     if (!/^\d{10}$/.test(phone))
       return res.status(400).json({ error: 'Phone must be 10 digits' });
 
-    const { data: existing } = await supabase.from('users').select('id').eq('email', email).maybeSingle();
+    const existingResult = await db.query('SELECT id FROM users WHERE email = $1 LIMIT 1', [email]);
+    const existing = existingResult.rows[0];
     if (existing) return res.status(409).json({ error: 'Email already registered' });
-    const { data: dupPhone } = await supabase.from('users').select('id').eq('phone', phone).neq('role_id', 3).maybeSingle();
+
+    const dupPhoneResult = await db.query('SELECT id FROM users WHERE phone = $1 AND role_id != 3 LIMIT 1', [phone]);
+    const dupPhone = dupPhoneResult.rows[0];
     if (dupPhone) return res.status(409).json({ error: 'Mobile number already registered' });
 
     // Build slug from org name
@@ -390,17 +385,21 @@ const adminRegister = async (req, res) => {
       + '-' + Math.floor(1000 + Math.random() * 9000);
     const organization_code = slug.toUpperCase().slice(0, 12);
 
-    // Create organization first
-    const { data: org, error: orgErr } = await supabase.from('organizations').insert([{
-      organization_name : org_name.trim(),
-      slug,
-      organization_code,
-      billing_status    : 'trial',
-      payment_status    : 'pending',
-      portal_access     : { admin: true, doctor: true, patient: true, reception: true, lab: true, pharmacy: true, analytics: true },
-    }]).select('id, organization_name').single();
-
-    if (orgErr) throw orgErr;
+    // Create organization first in superadmin schema
+    const orgInsertResult = await db.query(
+      `INSERT INTO superadmin.organizations (organization_name, slug, organization_code, billing_status, payment_status, portal_access)
+       VALUES ($1, $2, $3, $4, $5, $6)
+       RETURNING id, organization_name`,
+      [
+        org_name.trim(),
+        slug,
+        organization_code,
+        'trial',
+        'pending',
+        JSON.stringify({ admin: true, doctor: true, patient: true, reception: true, lab: true, pharmacy: true, analytics: true })
+      ]
+    );
+    const org = orgInsertResult.rows[0];
 
     const password_hash = await bcrypt.hash(password, 10);
     const [first_name, ...rest] = display_name.trim().split(' ');
@@ -409,23 +408,27 @@ const adminRegister = async (req, res) => {
     const otp    = genOtp();
     const expiry = new Date(Date.now() + OTP_TTL_MS).toISOString();
 
-    const { data: user, error: userErr } = await supabase.from('users').insert([{
-      first_name,
-      last_name,
-      email,
-      phone,
-      password_hash,
-      role_id         : 1,
-      roles           : [1],
-      organization_id : org.id,
-      is_active       : true,
-      email_verified  : false,
-      otp_code        : otp,
-      otp_expiry      : expiry,
-      otp_purpose     : 'verification',
-    }]).select('id, first_name, last_name, email, role_id, organization_id, created_at').single();
-
-    if (userErr) throw userErr;
+    const userInsertResult = await db.query(
+      `INSERT INTO users (first_name, last_name, email, phone, password_hash, role_id, roles, organization_id, is_active, email_verified, otp_code, otp_expiry, otp_purpose)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+       RETURNING id, first_name, last_name, email, role_id, organization_id, created_at`,
+      [
+        first_name,
+        last_name,
+        email,
+        phone,
+        password_hash,
+        1,
+        [1],
+        org.id,
+        true,
+        false,
+        otp,
+        expiry,
+        'verification'
+      ]
+    );
+    const user = userInsertResult.rows[0];
 
     // Send verification OTP (non-fatal)
     const sent = await sendOtpEmail(user.email, user.first_name, otp, 'verification');
@@ -446,17 +449,14 @@ const adminRegister = async (req, res) => {
 
 /* ─────────────────────────────────────────
    SEND OTP (verification / login)
-───────────────────────────────────────── */
+ ───────────────────────────────────────── */
 const sendOtp = async (req, res) => {
   try {
     const { email, purpose = 'verification' } = req.body;
     if (!email) return res.status(400).json({ error: 'Email is required' });
 
-    const { data: user } = await supabase
-      .from('users')
-      .select('id, first_name, email, email_verified')
-      .eq('email', email)
-      .single();
+    const userResult = await db.query('SELECT id, first_name, email, email_verified FROM users WHERE email = $1 LIMIT 1', [email]);
+    const user = userResult.rows[0];
 
     if (!user) return res.status(404).json({ error: 'No account found with this email' });
     if (purpose === 'verification' && user.email_verified) {
@@ -466,11 +466,10 @@ const sendOtp = async (req, res) => {
     const otp    = genOtp();
     const expiry = new Date(Date.now() + OTP_TTL_MS).toISOString();
 
-    const { error: updErr } = await supabase
-      .from('users')
-      .update({ otp_code: otp, otp_expiry: expiry, otp_purpose: purpose })
-      .eq('id', user.id);
-    if (updErr) throw updErr;
+    await db.query(
+      'UPDATE users SET otp_code = $1, otp_expiry = $2, otp_purpose = $3 WHERE id = $4',
+      [otp, expiry, purpose, user.id]
+    );
 
     const sent = await sendOtpEmail(user.email, user.first_name, otp, purpose);
     return res.json({
@@ -485,17 +484,18 @@ const sendOtp = async (req, res) => {
 
 /* ─────────────────────────────────────────
    VERIFY OTP
-───────────────────────────────────────── */
+ ───────────────────────────────────────── */
 const verifyOtp = async (req, res) => {
   try {
     const { email, otp, purpose = 'verification' } = req.body;
     if (!email || !otp) return res.status(400).json({ error: 'Email and OTP are required' });
 
-    const { data: user } = await supabase
-      .from('users')
-      .select('id, first_name, last_name, email, role_id, roles, organization_id, otp_code, otp_expiry, otp_purpose, is_active, account_status, invite_status')
-      .eq('email', email)
-      .single();
+    const userResult = await db.query(
+      `SELECT id, first_name, last_name, email, role_id, roles, organization_id, otp_code, otp_expiry, otp_purpose, is_active, account_status, invite_status 
+       FROM users WHERE email = $1 LIMIT 1`,
+      [email]
+    );
+    const user = userResult.rows[0];
 
     if (!user) return res.status(404).json({ error: 'No account found with this email' });
     if (!user.otp_code || user.otp_code !== String(otp)) {
@@ -515,10 +515,12 @@ const verifyOtp = async (req, res) => {
     }
 
     // Mark verified + clear OTP
-    await supabase
-      .from('users')
-      .update({ email_verified: true, otp_code: null, otp_expiry: null, otp_purpose: null, last_login_at: new Date().toISOString(), failed_login_attempts: 0, locked_until: null })
-      .eq('id', user.id);
+    await db.query(
+      `UPDATE users 
+       SET email_verified = true, otp_code = NULL, otp_expiry = NULL, otp_purpose = NULL, last_login_at = $1, failed_login_attempts = 0, locked_until = NULL 
+       WHERE id = $2`,
+      [new Date().toISOString(), user.id]
+    );
     await auditLog({ user_id: user.id, role_id: user.role_id, organization_id: user.organization_id || null,
       action: purpose === 'login' ? 'LOGIN_2FA' : 'EMAIL_VERIFIED', module: 'Auth', entity_type: 'user', entity_id: user.id,
       description: purpose === 'login' ? 'Successful 2FA login' : 'Email verified' });
@@ -547,8 +549,8 @@ const verifyOtp = async (req, res) => {
 };
 
 /* ─────────────────────────────────────────
-   LOGOUT (authenticated) — records logout history
-───────────────────────────────────────── */
+   LOGOUT (authenticated)
+ ───────────────────────────────────────── */
 const logout = async (req, res) => {
   try {
     await auditLog({ user_id: req.user.id, role_id: req.user.role_id, organization_id: req.user.organization_id || null,
@@ -561,17 +563,17 @@ const logout = async (req, res) => {
 
 /* ─────────────────────────────────────────
    INVITE: validate activation token
-───────────────────────────────────────── */
+ ───────────────────────────────────────── */
 const getInvite = async (req, res) => {
   try {
     const { token } = req.params;
     if (!token) return res.status(400).json({ error: 'No invitation token provided' });
 
-    const { data: user } = await supabase
-      .from('users')
-      .select('id, first_name, last_name, email, invite_status, invite_token_expiry')
-      .eq('invite_token', token)
-      .single();
+    const userResult = await db.query(
+      'SELECT id, first_name, last_name, email, invite_status, invite_token_expiry FROM users WHERE invite_token = $1 LIMIT 1',
+      [token]
+    );
+    const user = userResult.rows[0];
 
     if (!user) return res.status(400).json({ error: 'Invalid or expired invitation link' });
     if (user.invite_status === 'active') return res.status(409).json({ error: 'This account is already activated. Please sign in.' });
@@ -588,18 +590,19 @@ const getInvite = async (req, res) => {
 
 /* ─────────────────────────────────────────
    INVITE: activate account + set password
-───────────────────────────────────────── */
+ ───────────────────────────────────────── */
 const activateInvite = async (req, res) => {
   try {
     const { token, otp, new_password } = req.body;
     if (!token || !new_password) return res.status(400).json({ error: 'token and new_password are required' });
     if (new_password.length < 6)  return res.status(400).json({ error: 'Password must be at least 6 characters' });
 
-    const { data: user } = await supabase
-      .from('users')
-      .select('id, first_name, last_name, email, role_id, roles, organization_id, invite_status, invite_token_expiry, otp_code, otp_expiry')
-      .eq('invite_token', token)
-      .single();
+    const userResult = await db.query(
+      `SELECT id, first_name, last_name, email, role_id, roles, organization_id, invite_status, invite_token_expiry, otp_code, otp_expiry 
+       FROM users WHERE invite_token = $1 LIMIT 1`,
+      [token]
+    );
+    const user = userResult.rows[0];
 
     if (!user) return res.status(400).json({ error: 'Invalid or expired invitation link' });
 
@@ -614,20 +617,18 @@ const activateInvite = async (req, res) => {
     }
 
     const password_hash = await bcrypt.hash(new_password, 10);
-    await supabase.from('users').update({
-      password_hash,
-      email_verified      : true,
-      is_active           : true,
-      account_status      : 'active',
-      invite_status       : 'active',
-      invite_token        : null,
-      invite_token_expiry : null,
-      otp_code            : null,
-      otp_expiry          : null,
-      otp_purpose         : null,
-    }).eq('id', user.id);
+    await db.query(
+      `UPDATE users 
+       SET password_hash = $1, email_verified = true, is_active = true, account_status = 'active', invite_status = 'active', 
+           invite_token = NULL, invite_token_expiry = NULL, otp_code = NULL, otp_expiry = NULL, otp_purpose = NULL 
+       WHERE id = $2`,
+      [password_hash, user.id]
+    );
     // Keep the linked employee record in sync.
-    await supabase.from('staff_profiles').update({ is_active: true, employment_status: 'Active' }).eq('user_id', user.id);
+    await db.query(
+      "UPDATE staff_profiles SET is_active = true, employment_status = 'Active' WHERE user_id = $1",
+      [user.id]
+    );
     await auditLog({ user_id: user.id, role_id: user.role_id, organization_id: user.organization_id || null,
       action: 'ACCOUNT_ACTIVATED', module: 'Auth', entity_type: 'user', entity_id: user.id, description: 'Account activated via invitation' });
 

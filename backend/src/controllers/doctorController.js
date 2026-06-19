@@ -1,126 +1,144 @@
+const { auditLog } = require('../middlewares/audit');
 
 // Full ordered cascade delete — keeps FK intact, deletes deps first
-const hardDeleteDoctor = async (sb, doctorId) => {
+const hardDeleteDoctor = async (db, doctorId) => {
   // Collect all appointment IDs for this doctor
-  const { data: appts } = await sb.from('appointments').select('id').eq('doctor_id', doctorId);
-  const apptIds = (appts || []).map(a => a.id);
+  const apptsResult = await db.query('SELECT id FROM appointments WHERE doctor_id = $1', [doctorId]);
+  const apptIds = apptsResult.rows.map(a => a.id);
 
   // Collect all consultation IDs (by doctor_id + by appointment)
   const consultIdSet = new Set();
-  const { data: doctorConsults } = await sb.from('consultations').select('id').eq('doctor_id', doctorId);
-  (doctorConsults || []).forEach(c => consultIdSet.add(c.id));
+  const doctorConsultsResult = await db.query('SELECT id FROM consultations WHERE doctor_id = $1', [doctorId]);
+  doctorConsultsResult.rows.forEach(c => consultIdSet.add(c.id));
   if (apptIds.length) {
-    const { data: apptConsults } = await sb.from('consultations').select('id').in('appointment_id', apptIds);
-    (apptConsults || []).forEach(c => consultIdSet.add(c.id));
+    const apptConsultsResult = await db.query('SELECT id FROM consultations WHERE appointment_id = ANY($1)', [apptIds]);
+    apptConsultsResult.rows.forEach(c => consultIdSet.add(c.id));
   }
   const consultIds = [...consultIdSet];
 
   // Collect all prescription IDs (by doctor_id + by consultation + by appointment)
   const prescIdSet = new Set();
-  const { data: doctorPrescs } = await sb.from('prescriptions').select('id').eq('doctor_id', doctorId);
-  (doctorPrescs || []).forEach(p => prescIdSet.add(p.id));
+  const doctorPrescsResult = await db.query('SELECT id FROM prescriptions WHERE doctor_id = $1', [doctorId]);
+  doctorPrescsResult.rows.forEach(p => prescIdSet.add(p.id));
   if (consultIds.length) {
-    const { data: cPrescs } = await sb.from('prescriptions').select('id').in('consultation_id', consultIds);
-    (cPrescs || []).forEach(p => prescIdSet.add(p.id));
+    const cPrescsResult = await db.query('SELECT id FROM prescriptions WHERE consultation_id = ANY($1)', [consultIds]);
+    cPrescsResult.rows.forEach(p => prescIdSet.add(p.id));
   }
   if (apptIds.length) {
-    const { data: aPrescs } = await sb.from('prescriptions').select('id').in('appointment_id', apptIds);
-    (aPrescs || []).forEach(p => prescIdSet.add(p.id));
+    const aPrescsResult = await db.query('SELECT id FROM prescriptions WHERE appointment_id = ANY($1)', [apptIds]);
+    aPrescsResult.rows.forEach(p => prescIdSet.add(p.id));
   }
   const prescIds = [...prescIdSet];
 
   // Collect all lab order IDs
   const loIdSet = new Set();
-  const { data: doctorLos } = await sb.from('lab_orders').select('id').eq('doctor_id', doctorId);
-  (doctorLos || []).forEach(l => loIdSet.add(l.id));
+  const doctorLosResult = await db.query('SELECT id FROM lab_orders WHERE doctor_id = $1', [doctorId]);
+  doctorLosResult.rows.forEach(l => loIdSet.add(l.id));
   if (consultIds.length) {
-    const { data: cLos } = await sb.from('lab_orders').select('id').in('consultation_id', consultIds);
-    (cLos || []).forEach(l => loIdSet.add(l.id));
+    const cLosResult = await db.query('SELECT id FROM lab_orders WHERE consultation_id = ANY($1)', [consultIds]);
+    cLosResult.rows.forEach(l => loIdSet.add(l.id));
   }
   if (apptIds.length) {
-    const { data: aLos } = await sb.from('lab_orders').select('id').in('appointment_id', apptIds);
-    (aLos || []).forEach(l => loIdSet.add(l.id));
+    const aLosResult = await db.query('SELECT id FROM lab_orders WHERE appointment_id = ANY($1)', [apptIds]);
+    aLosResult.rows.forEach(l => loIdSet.add(l.id));
   }
   const loIds = [...loIdSet];
 
   // Collect pharmacy invoice IDs linked to this doctor's consultations or prescriptions
   const phInvIdSet = new Set();
   if (consultIds.length) {
-    const { data: cInvs } = await sb.from('pharmacy_invoices').select('id').in('consultation_id', consultIds);
-    (cInvs || []).forEach(i => phInvIdSet.add(i.id));
+    const cInvsResult = await db.query('SELECT id FROM pharmacy_invoices WHERE consultation_id = ANY($1)', [consultIds]);
+    cInvsResult.rows.forEach(i => phInvIdSet.add(i.id));
   }
   if (prescIds.length) {
-    const { data: pInvs } = await sb.from('pharmacy_invoices').select('id').in('prescription_id', prescIds);
-    (pInvs || []).forEach(i => phInvIdSet.add(i.id));
+    const pInvsResult = await db.query('SELECT id FROM pharmacy_invoices WHERE prescription_id = ANY($1)', [prescIds]);
+    pInvsResult.rows.forEach(i => phInvIdSet.add(i.id));
   }
   const phInvIds = [...phInvIdSet];
 
   // Step 1: prescription_items (FK → prescriptions)
-  if (prescIds.length) await sb.from('prescription_items').delete().in('prescription_id', prescIds);
+  if (prescIds.length) await db.query('DELETE FROM prescription_items WHERE prescription_id = ANY($1)', [prescIds]);
 
   // Step 2: pharmacy_invoice_items then pharmacy_invoices (FK → consultations/prescriptions)
-  if (phInvIds.length) await sb.from('pharmacy_invoice_items').delete().in('pharmacy_invoice_id', phInvIds);
-  if (phInvIds.length) await sb.from('pharmacy_invoices').delete().in('id', phInvIds);
+  if (phInvIds.length) await db.query('DELETE FROM pharmacy_invoice_items WHERE pharmacy_invoice_id = ANY($1)', [phInvIds]);
+  if (phInvIds.length) await db.query('DELETE FROM pharmacy_invoices WHERE id = ANY($1)', [phInvIds]);
 
   // Step 3: lab_results (FK → lab_orders / appointments)
-  if (loIds.length)   await sb.from('lab_results').delete().in('lab_order_id', loIds);
-  if (apptIds.length) await sb.from('lab_results').delete().in('appointment_id', apptIds);
-  await sb.from('lab_results').delete().eq('doctor_id', doctorId);
+  if (loIds.length)   await db.query('DELETE FROM lab_results WHERE lab_order_id = ANY($1)', [loIds]);
+  if (apptIds.length) await db.query('DELETE FROM lab_results WHERE appointment_id = ANY($1)', [apptIds]);
+  await db.query('DELETE FROM lab_results WHERE doctor_id = $1', [doctorId]);
 
   // Step 4: queue_tokens (FK → appointments)
-  if (apptIds.length) await sb.from('queue_tokens').delete().in('appointment_id', apptIds);
-  await sb.from('queue_tokens').delete().eq('doctor_id', doctorId);
+  if (apptIds.length) await db.query('DELETE FROM queue_tokens WHERE appointment_id = ANY($1)', [apptIds]);
+  await db.query('DELETE FROM queue_tokens WHERE doctor_id = $1', [doctorId]);
 
   // Step 5: prescriptions (FK → consultations)
-  if (prescIds.length) await sb.from('prescriptions').delete().in('id', prescIds);
+  if (prescIds.length) await db.query('DELETE FROM prescriptions WHERE id = ANY($1)', [prescIds]);
 
   // Step 6: lab_orders (FK → consultations)
-  if (loIds.length) await sb.from('lab_orders').delete().in('id', loIds);
+  if (loIds.length) await db.query('DELETE FROM lab_orders WHERE id = ANY($1)', [loIds]);
 
   // Step 7: NULL appointments.consultation_id to break circular FK before deleting consultations
-  if (apptIds.length) await sb.from('appointments').update({ consultation_id: null }).in('id', apptIds);
+  if (apptIds.length) await db.query('UPDATE appointments SET consultation_id = NULL WHERE id = ANY($1)', [apptIds]);
 
   // Step 8: consultations (FK → appointments, now safe)
-  if (consultIds.length) await sb.from('consultations').delete().in('id', consultIds);
+  if (consultIds.length) await db.query('DELETE FROM consultations WHERE id = ANY($1)', [consultIds]);
 
   // Step 8: follow_ups
-  await sb.from('follow_ups').delete().eq('doctor_id', doctorId);
+  await db.query('DELETE FROM follow_ups WHERE doctor_id = $1', [doctorId]);
 
   // Step 9: appointments
-  await sb.from('appointments').delete().eq('doctor_id', doctorId);
+  await db.query('DELETE FROM appointments WHERE doctor_id = $1', [doctorId]);
 
   // Step 10: doctor config tables
-  await sb.from('doctor_leaves').delete().eq('doctor_id', doctorId);
-  await sb.from('doctor_availability').delete().eq('doctor_id', doctorId);
-  await sb.from('doctor_blocked_slots').delete().eq('doctor_id', doctorId);
+  await db.query('DELETE FROM doctor_leaves WHERE doctor_id = $1', [doctorId]);
+  await db.query('DELETE FROM doctor_availability WHERE doctor_id = $1', [doctorId]);
+  await db.query('DELETE FROM doctor_blocked_slots WHERE doctor_id = $1', [doctorId]);
 
   // Step 11: finally delete doctor
-  const { error } = await sb.from('doctors').delete().eq('id', doctorId);
-  if (error) throw error;
+  await db.query('DELETE FROM doctors WHERE id = $1', [doctorId]);
 };
 
 const attachUsers = async (doctors, db) => {
   if (!doctors.length) return doctors;
   const userIds = [...new Set(doctors.map(d => d.user_id).filter(Boolean))];
-  const { data: users } = await db.from('users').select('id, first_name, last_name, email, phone').in('id', userIds);
+  
+  const result = await db.query(
+    'SELECT id, first_name, last_name, email, phone FROM users WHERE id = ANY($1)',
+    [userIds]
+  );
+  
   const userMap = {};
-  (users || []).forEach(u => { userMap[u.id] = u; });
+  result.rows.forEach(u => { userMap[u.id] = u; });
   return doctors.map(d => ({ ...d, users: userMap[d.user_id] || null }));
 };
 
 // GET /doctors
 const getDoctors = async (req, res) => {
   try {
-    const supabase = req.db;
+    const db = req.db;
     const organizationId = req.user?.organization_id ?? null;
     const { specialty } = req.query;
-    let query = supabase.from('doctors').select('id, user_id, specialization, consultation_fee, experience_years, is_active, organization_id');
-    // Multi-tenant isolation: only this org's doctors (super-admin with no org sees all)
-    if (organizationId) query = query.eq('organization_id', organizationId);
-    if (specialty) query = query.ilike('specialization', `%${specialty}%`);
-    const { data, error } = await query;
-    if (error) throw error;
-    const doctors = await attachUsers(data || [], supabase);
+    
+    let queryText = 'SELECT id, user_id, specialization, consultation_fee, experience_years, is_active, organization_id FROM doctors';
+    const conditions = [];
+    const params = [];
+
+    if (organizationId) {
+      params.push(organizationId);
+      conditions.push(`organization_id = $${params.length}`);
+    }
+    if (specialty) {
+      params.push(`%${specialty}%`);
+      conditions.push(`specialization ILIKE $${params.length}`);
+    }
+
+    if (conditions.length > 0) {
+      queryText += ' WHERE ' + conditions.join(' AND ');
+    }
+
+    const result = await db.query(queryText, params);
+    const doctors = await attachUsers(result.rows || [], db);
     return res.status(200).json({ doctors });
   } catch (err) {
     console.error('getDoctors error:', err.message);
@@ -131,13 +149,20 @@ const getDoctors = async (req, res) => {
 // GET /doctors/:id
 const getDoctorById = async (req, res) => {
   try {
-    const supabase = req.db;
+    const db = req.db;
     const organizationId = req.user?.organization_id ?? null;
-    let q = supabase.from('doctors').select('id, user_id, specialization, consultation_fee, experience_years, is_active, organization_id').eq('id', req.params.id);
-    if (organizationId) q = q.eq('organization_id', organizationId);
-    const { data, error } = await q.single();
-    if (error || !data) return res.status(404).json({ error: 'Doctor not found' });
-    const [doctor] = await attachUsers([data], supabase);
+    let queryText = 'SELECT id, user_id, specialization, consultation_fee, experience_years, is_active, organization_id FROM doctors WHERE id = $1';
+    const params = [req.params.id];
+    if (organizationId) {
+      params.push(organizationId);
+      queryText += ' AND organization_id = $2';
+    }
+    queryText += ' LIMIT 1';
+
+    const result = await db.query(queryText, params);
+    const data = result.rows[0];
+    if (!data) return res.status(404).json({ error: 'Doctor not found' });
+    const [doctor] = await attachUsers([data], db);
     return res.status(200).json({ doctor });
   } catch (err) {
     console.error('getDoctorById error:', err.message);
@@ -148,22 +173,35 @@ const getDoctorById = async (req, res) => {
 // POST /doctors
 const createDoctor = async (req, res) => {
   try {
-    const supabase = req.db;
+    const db = req.db;
     const organizationId = req.user?.organization_id ?? null;
     const { user_id, specialization, consultation_fee, experience } = req.body;
     if (!user_id || !specialization || consultation_fee === undefined) {
       return res.status(400).json({ error: 'user_id, specialization, and consultation_fee are required' });
     }
+    
     // User must belong to the same org
-    let userQ = supabase.from('users').select('id, role_id, organization_id').eq('id', user_id);
-    if (organizationId) userQ = userQ.eq('organization_id', organizationId);
-    const { data: userRecord, error: userErr } = await userQ.single();
-    if (userErr || !userRecord) return res.status(404).json({ error: 'User not found in this organization' });
+    let userQuery = 'SELECT id, role_id, organization_id FROM users WHERE id = $1';
+    const userParams = [user_id];
+    if (organizationId) {
+      userParams.push(organizationId);
+      userQuery += ' AND organization_id = $2';
+    }
+    userQuery += ' LIMIT 1';
+
+    const userResult = await db.query(userQuery, userParams);
+    const userRecord = userResult.rows[0];
+    if (!userRecord) return res.status(404).json({ error: 'User not found in this organization' });
     if (userRecord.role_id !== 2) return res.status(400).json({ error: 'User must have doctor role (role_id=2)' });
 
-    const { data, error } = await supabase.from('doctors').insert({ user_id, specialization, consultation_fee: Number(consultation_fee), experience_years: experience || null, organization_id: organizationId }).select('id, user_id, specialization, consultation_fee, experience_years').single();
-    if (error) throw error;
-    const [doctor] = await attachUsers([data], supabase);
+    const insertResult = await db.query(
+      `INSERT INTO doctors (user_id, specialization, consultation_fee, experience_years, organization_id)
+       VALUES ($1, $2, $3, $4, $5)
+       RETURNING id, user_id, specialization, consultation_fee, experience_years`,
+      [user_id, specialization, Number(consultation_fee), experience || null, organizationId]
+    );
+    const data = insertResult.rows[0];
+    const [doctor] = await attachUsers([data], db);
     return res.status(201).json({ message: 'Doctor created', doctor });
   } catch (err) {
     console.error('createDoctor error:', err.message);
@@ -174,15 +212,22 @@ const createDoctor = async (req, res) => {
 // PUT /doctors/:id
 const updateDoctor = async (req, res) => {
   try {
-    const supabase = req.db;
+    const db = req.db;
     const organizationId = req.user?.organization_id ?? null;
     const { id } = req.params;
     const { first_name, last_name, email, phone, specialization, consultation_fee, experience_years } = req.body;
 
-    let fetchQ = supabase.from('doctors').select('id, user_id, organization_id').eq('id', id);
-    if (organizationId) fetchQ = fetchQ.eq('organization_id', organizationId);
-    const { data: doctor, error: fetchErr } = await fetchQ.single();
-    if (fetchErr || !doctor) return res.status(404).json({ error: 'Doctor not found' });
+    let docQuery = 'SELECT id, user_id, organization_id FROM doctors WHERE id = $1';
+    const docParams = [id];
+    if (organizationId) {
+      docParams.push(organizationId);
+      docQuery += ' AND organization_id = $2';
+    }
+    docQuery += ' LIMIT 1';
+
+    const docResult = await db.query(docQuery, docParams);
+    const doctor = docResult.rows[0];
+    if (!doctor) return res.status(404).json({ error: 'Doctor not found' });
 
     const userPayload = {};
     if (first_name !== undefined) userPayload.first_name = first_name;
@@ -191,8 +236,10 @@ const updateDoctor = async (req, res) => {
     if (phone !== undefined) userPayload.phone = phone || null;
 
     if (Object.keys(userPayload).length > 0) {
-      const { error: userErr } = await supabase.from('users').update(userPayload).eq('id', doctor.user_id);
-      if (userErr) throw userErr;
+      const userKeys = Object.keys(userPayload);
+      const userValues = Object.values(userPayload);
+      const userSetClause = userKeys.map((key, idx) => `${key} = $${idx + 1}`).join(', ');
+      await db.query(`UPDATE users SET ${userSetClause} WHERE id = $${userKeys.length + 1}`, [...userValues, doctor.user_id]);
     }
 
     const doctorPayload = {};
@@ -201,14 +248,15 @@ const updateDoctor = async (req, res) => {
     if (experience_years !== undefined) doctorPayload.experience_years = experience_years !== '' ? Number(experience_years) : null;
 
     if (Object.keys(doctorPayload).length > 0) {
-      const { error: docErr } = await supabase.from('doctors').update(doctorPayload).eq('id', id);
-      if (docErr) throw docErr;
+      const docKeys = Object.keys(doctorPayload);
+      const docValues = Object.values(doctorPayload);
+      const docSetClause = docKeys.map((key, idx) => `${key} = $${idx + 1}`).join(', ');
+      await db.query(`UPDATE doctors SET ${docSetClause} WHERE id = $${docKeys.length + 1}`, [...docValues, id]);
     }
 
-    const { data: updated, error: getErr } = await supabase
-      .from('doctors').select('id, user_id, specialization, consultation_fee, experience_years, is_active').eq('id', id).single();
-    if (getErr) throw getErr;
-    const [result] = await attachUsers([updated], supabase);
+    const finalResult = await db.query('SELECT id, user_id, specialization, consultation_fee, experience_years, is_active FROM doctors WHERE id = $1 LIMIT 1', [id]);
+    const updated = finalResult.rows[0];
+    const [result] = await attachUsers([updated], db);
     return res.status(200).json({ message: 'Doctor updated', doctor: result });
   } catch (err) {
     console.error('updateDoctor error:', err.message);
@@ -219,31 +267,41 @@ const updateDoctor = async (req, res) => {
 // DELETE /doctors/:id
 const deleteDoctor = async (req, res) => {
   try {
-    const supabase = req.db;
+    const db = req.db;
     const organizationId = req.user?.organization_id ?? null;
     const id = req.params.id;
 
     // Verify the doctor belongs to this org before any delete work
-    let docQ = supabase.from('doctors').select('id, organization_id').eq('id', id);
-    if (organizationId) docQ = docQ.eq('organization_id', organizationId);
-    const { data: docRow } = await docQ.single();
+    let docQuery = 'SELECT id, organization_id FROM doctors WHERE id = $1';
+    const docParams = [id];
+    if (organizationId) {
+      docParams.push(organizationId);
+      docQuery += ' AND organization_id = $2';
+    }
+    docQuery += ' LIMIT 1';
+    const docResult = await db.query(docQuery, docParams);
+    const docRow = docResult.rows[0];
     if (!docRow) return res.status(404).json({ error: 'Doctor not found' });
 
-    const { data: appts, error: apptErr } = await supabase
-      .from('appointments')
-      .select('id, appointment_date, appointment_time, status, patient_id')
-      .eq('doctor_id', id)
-      .not('status', 'in', '("cancelled","completed")');
-    if (apptErr) throw apptErr;
+    // Check if there are active appointments (status not in cancelled or completed)
+    const apptsResult = await db.query(
+      "SELECT id, appointment_date, appointment_time, status, patient_id FROM appointments WHERE doctor_id = $1 AND status NOT IN ('cancelled', 'completed')",
+      [id]
+    );
+    const appts = apptsResult.rows;
+
     if (appts && appts.length > 0) {
       const patientIds = [...new Set(appts.map(a => a.patient_id).filter(Boolean))];
-      const { data: patients } = await supabase.from('patients').select('id, user_id').in('id', patientIds);
-      const userIds = (patients || []).map(p => p.user_id).filter(Boolean);
-      const { data: users } = await supabase.from('users').select('id, first_name, last_name').in('id', userIds);
+      const patientsResult = await db.query('SELECT id, user_id FROM patients WHERE id = ANY($1)', [patientIds]);
+      const userIds = patientsResult.rows.map(p => p.user_id).filter(Boolean);
+      
+      const usersResult = await db.query('SELECT id, first_name, last_name FROM users WHERE id = ANY($1)', [userIds]);
       const userMap = {};
-      (users || []).forEach(u => { userMap[u.id] = u; });
+      usersResult.rows.forEach(u => { userMap[u.id] = u; });
+      
       const patMap = {};
-      (patients || []).forEach(p => { patMap[p.id] = userMap[p.user_id] || null; });
+      patientsResult.rows.forEach(p => { patMap[p.id] = userMap[p.user_id] || null; });
+      
       const appointments = appts.map(a => ({
         id: a.id, appointment_date: a.appointment_date,
         appointment_time: a.appointment_time, status: a.status,
@@ -251,7 +309,8 @@ const deleteDoctor = async (req, res) => {
       }));
       return res.status(409).json({ error: 'Doctor has active appointments', appointments });
     }
-    await hardDeleteDoctor(supabase, id);
+    
+    await hardDeleteDoctor(db, id);
     return res.status(200).json({ message: 'Doctor deleted' });
   } catch (err) {
     console.error('deleteDoctor error:', err.message);
@@ -262,15 +321,17 @@ const deleteDoctor = async (req, res) => {
 // GET /doctors/me/schedule?date=YYYY-MM-DD
 const getDoctorSchedule = async (req, res) => {
   try {
-    const supabase = req.db;
+    const db = req.db;
     const { date } = req.query;
     if (!date) return res.status(400).json({ error: 'date is required' });
 
-    const { data: doctor } = await supabase.from('doctors').select('id').eq('user_id', req.user.id).single();
+    const docResult = await db.query('SELECT id FROM doctors WHERE user_id = $1 LIMIT 1', [req.user.id]);
+    const doctor = docResult.rows[0];
     if (!doctor) return res.status(404).json({ error: 'Doctor profile not found' });
     const doctor_id = doctor.id;
 
-    const { data: avail } = await supabase.from('doctor_availability').select('*').eq('doctor_id', doctor_id).single();
+    const availResult = await db.query('SELECT * FROM doctor_availability WHERE doctor_id = $1 LIMIT 1', [doctor_id]);
+    const avail = availResult.rows[0];
     if (!avail) return res.status(200).json({ slots: [], message: 'Availability not configured' });
 
     const dayName = new Date(date).toLocaleDateString('en-US', { weekday: 'long' });
@@ -285,16 +346,24 @@ const getDoctorSchedule = async (req, res) => {
       allTimes.push(`${String(Math.floor(m/60)).padStart(2,'0')}:${String(m%60).padStart(2,'0')}`);
     }
 
-    const { data: booked } = await supabase
-      .from('appointments').select('appointment_time, patients(first_name, last_name)')
-      .eq('doctor_id', doctor_id).eq('appointment_date', date).in('status', ['booked', 'confirmed']);
+    const bookedResult = await db.query(
+      `SELECT a.appointment_time, p.first_name, p.last_name 
+       FROM appointments a
+       LEFT JOIN patients p ON a.patient_id = p.id
+       WHERE a.doctor_id = $1 AND a.appointment_date = $2 AND a.status IN ('booked', 'confirmed')`,
+      [doctor_id, date]
+    );
 
     const bookedMap = {};
-    (booked || []).forEach(b => { bookedMap[String(b.appointment_time).slice(0,5)] = b.patients; });
+    bookedResult.rows.forEach(b => {
+      bookedMap[String(b.appointment_time).slice(0,5)] = { first_name: b.first_name, last_name: b.last_name };
+    });
 
-    const { data: blocked } = await supabase
-      .from('doctor_blocked_slots').select('blocked_time').eq('doctor_id', doctor_id).eq('blocked_date', date);
-    const blockedSet = new Set((blocked || []).map(b => String(b.blocked_time).slice(0,5)));
+    const blockedResult = await db.query(
+      'SELECT blocked_time FROM doctor_blocked_slots WHERE doctor_id = $1 AND blocked_date = $2',
+      [doctor_id, date]
+    );
+    const blockedSet = new Set(blockedResult.rows.map(b => String(b.blocked_time).slice(0,5)));
 
     return res.json({
       slots: allTimes.map(time => ({
@@ -312,23 +381,27 @@ const getDoctorSchedule = async (req, res) => {
 // POST /doctors/me/schedule/block  — body: { date, slot_time, action: 'block'|'unblock' }
 const toggleBlockSlot = async (req, res) => {
   try {
-    const supabase = req.db;
+    const db = req.db;
     const { date, slot_time, action } = req.body;
     if (!date || !slot_time || !action) return res.status(400).json({ error: 'date, slot_time, action required' });
 
-    const { data: doctor } = await supabase.from('doctors').select('id').eq('user_id', req.user.id).single();
+    const docResult = await db.query('SELECT id FROM doctors WHERE user_id = $1 LIMIT 1', [req.user.id]);
+    const doctor = docResult.rows[0];
     if (!doctor) return res.status(404).json({ error: 'Doctor profile not found' });
 
     if (action === 'block') {
-      const { error } = await supabase.from('doctor_blocked_slots').upsert(
-        { doctor_id: doctor.id, blocked_date: date, blocked_time: slot_time, created_by: req.user.id, created_at: new Date().toISOString() },
-        { onConflict: 'doctor_id,blocked_date,blocked_time' }
+      await db.query(
+        `INSERT INTO doctor_blocked_slots (doctor_id, blocked_date, blocked_time, created_by, created_at)
+         VALUES ($1, $2, $3, $4, $5)
+         ON CONFLICT (doctor_id, blocked_date, blocked_time) 
+         DO UPDATE SET created_by = EXCLUDED.created_by, created_at = EXCLUDED.created_at`,
+        [doctor.id, date, slot_time, req.user.id, new Date().toISOString()]
       );
-      if (error) throw error;
     } else {
-      const { error } = await supabase.from('doctor_blocked_slots')
-        .delete().eq('doctor_id', doctor.id).eq('blocked_date', date).eq('blocked_time', slot_time);
-      if (error) throw error;
+      await db.query(
+        'DELETE FROM doctor_blocked_slots WHERE doctor_id = $1 AND blocked_date = $2 AND blocked_time = $3',
+        [doctor.id, date, slot_time]
+      );
     }
     return res.json({ message: action === 'block' ? 'Slot blocked' : 'Slot unblocked', date, slot_time });
   } catch (err) {

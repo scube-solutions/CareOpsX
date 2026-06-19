@@ -2,28 +2,66 @@
 // ── Get Audit Logs ────────────────────────────────────────────────────────────
 const getAuditLogs = async (req, res) => {
   try {
-    const supabase = req.db;
+    const db = req.db;
     const organizationId = req.user?.organization_id ?? null;
     const { user_id, module, action, entity_type, entity_id, date_from, date_to, page = 1, limit = 50 } = req.query;
-    const offset = (parseInt(page) - 1) * parseInt(limit);
+    const parsedLimit = parseInt(limit) || 50;
+    const offset = (parseInt(page) - 1) * parsedLimit;
 
-    let query = supabase.from('audit_logs')
-      .select('*', { count: 'exact' })
-      .order('created_at', { ascending: false })
-      .range(offset, offset + parseInt(limit) - 1);
+    let queryText = 'SELECT * FROM audit_logs';
+    let countQueryText = 'SELECT COUNT(*)::int FROM audit_logs';
+    const conditions = [];
+    const params = [];
 
-    if (organizationId) query = query.eq('organization_id', organizationId);
-    if (user_id) query = query.eq('user_id', user_id);
-    if (module) query = query.eq('module', module);
-    if (action) query = query.ilike('action', `%${action}%`);
-    if (entity_type) query = query.eq('entity_type', entity_type);
-    if (entity_id) query = query.eq('entity_id', entity_id);
-    if (date_from) query = query.gte('created_at', `${date_from}T00:00:00`);
-    if (date_to) query = query.lte('created_at', `${date_to}T23:59:59`);
+    if (organizationId) {
+      params.push(organizationId);
+      conditions.push(`organization_id = $${params.length}`);
+    }
+    if (user_id) {
+      params.push(user_id);
+      conditions.push(`user_id = $${params.length}`);
+    }
+    if (module) {
+      params.push(module);
+      conditions.push(`module = $${params.length}`);
+    }
+    if (action) {
+      params.push(`%${action}%`);
+      conditions.push(`action ILIKE $${params.length}`);
+    }
+    if (entity_type) {
+      params.push(entity_type);
+      conditions.push(`entity_type = $${params.length}`);
+    }
+    if (entity_id) {
+      params.push(entity_id);
+      conditions.push(`entity_id = $${params.length}`);
+    }
+    if (date_from) {
+      params.push(`${date_from}T00:00:00`);
+      conditions.push(`created_at >= $${params.length}`);
+    }
+    if (date_to) {
+      params.push(`${date_to}T23:59:59`);
+      conditions.push(`created_at <= $${params.length}`);
+    }
 
-    const { data, error, count } = await query;
-    if (error) throw error;
-    return res.json({ logs: data, total: count, page: parseInt(page), limit: parseInt(limit) });
+    if (conditions.length > 0) {
+      const whereClause = ' WHERE ' + conditions.join(' AND ');
+      queryText += whereClause;
+      countQueryText += whereClause;
+    }
+
+    // Get total count
+    const countResult = await db.query(countQueryText, params);
+    const total = countResult.rows[0].count;
+
+    // Add order and pagination
+    queryText += ' ORDER BY created_at DESC LIMIT $' + (params.length + 1) + ' OFFSET $' + (params.length + 2);
+    params.push(parsedLimit, offset);
+
+    const result = await db.query(queryText, params);
+    return res.json({ logs: result.rows, total, page: parseInt(page), limit: parsedLimit });
   } catch (err) {
     return res.status(500).json({ error: err.message });
   }
@@ -32,13 +70,19 @@ const getAuditLogs = async (req, res) => {
 // ── Get Audit Log By ID ───────────────────────────────────────────────────────
 const getAuditLogById = async (req, res) => {
   try {
-    const supabase = req.db;
+    const db = req.db;
     const organizationId = req.user?.organization_id ?? null;
-    let q = supabase.from('audit_logs').select('*').eq('id', req.params.id);
-    if (organizationId) q = q.eq('organization_id', organizationId);
-    const { data, error } = await q.single();
-    if (error || !data) return res.status(404).json({ error: 'Audit log not found' });
-    return res.json({ log: data });
+    let queryText = 'SELECT * FROM audit_logs WHERE id = $1';
+    const params = [req.params.id];
+    if (organizationId) {
+      params.push(organizationId);
+      queryText += ' AND organization_id = $2';
+    }
+    queryText += ' LIMIT 1';
+    const result = await db.query(queryText, params);
+    const log = result.rows[0];
+    if (!log) return res.status(404).json({ error: 'Audit log not found' });
+    return res.json({ log });
   } catch (err) {
     return res.status(500).json({ error: err.message });
   }
@@ -47,18 +91,20 @@ const getAuditLogById = async (req, res) => {
 // ── Activity Summary ──────────────────────────────────────────────────────────
 const getActivitySummary = async (req, res) => {
   try {
-    const supabase = req.db;
+    const db = req.db;
     const organizationId = req.user?.organization_id ?? null;
     const today = new Date().toISOString().split('T')[0];
-    let q = supabase.from('audit_logs')
-      .select('action, module, role_name, created_at')
-      .gte('created_at', `${today}T00:00:00`)
-      .order('created_at', { ascending: false })
-      .limit(100);
-    if (organizationId) q = q.eq('organization_id', organizationId);
-    const { data, error } = await q;
 
-    if (error) throw error;
+    let queryText = 'SELECT action, module, role_name, created_at FROM audit_logs WHERE created_at >= $1';
+    const params = [`${today}T00:00:00`];
+    if (organizationId) {
+      params.push(organizationId);
+      queryText += ' AND organization_id = $2';
+    }
+    queryText += ' ORDER BY created_at DESC LIMIT 100';
+
+    const result = await db.query(queryText, params);
+    const data = result.rows;
 
     const byModule = (data || []).reduce((acc, l) => {
       acc[l.module] = (acc[l.module] || 0) + 1;

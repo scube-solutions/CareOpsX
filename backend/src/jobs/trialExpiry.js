@@ -1,5 +1,5 @@
 const cron = require('node-cron');
-const supabase = require('../utils/supabase'); // control-plane DB
+const db = require('../utils/db'); // control-plane DB
 const { sendEmail } = require('../utils/notify');
 
 const TRIAL_DAYS = 7;
@@ -9,28 +9,29 @@ const dayMid = (d) => { const x = new Date(d); return new Date(x.getFullYear(), 
 
 // Find the org admin's email (role_id 1) for an organization
 const getOrgAdminEmail = async (organizationId) => {
-  const { data } = await supabase
-    .from('users')
-    .select('email, first_name')
-    .eq('organization_id', organizationId)
-    .eq('role_id', 1)
-    .eq('is_active', true)
-    .limit(1)
-    .maybeSingle();
-  return data || null;
+  const result = await db.query(
+    `SELECT email, first_name 
+     FROM users 
+     WHERE organization_id = $1 AND role_id = 1 AND is_active = true 
+     LIMIT 1`,
+    [organizationId]
+  );
+  return result.rows[0] || null;
 };
 
 const runTrialCheck = async () => {
   try {
     const todayMid = dayMid(new Date());
     // Only orgs still on trial and currently active
-    const { data: orgs, error } = await supabase
-      .from('organizations')
-      .select('id, organization_name, created_at, billing_status, status')
-      .or('billing_status.eq.trial,billing_status.is.null');
-    if (error) throw error;
+    const orgsRes = await db.query(
+      `SELECT id, organization_name, created_at, billing_status, status 
+       FROM organizations 
+       WHERE billing_status = $1 OR billing_status IS NULL`,
+      ['trial']
+    );
+    const orgs = orgsRes.rows || [];
 
-    for (const org of orgs || []) {
+    for (const org of orgs) {
       if (!org.created_at) continue;
       const elapsed   = Math.floor((todayMid - dayMid(org.created_at)) / 86400000);
       const daysLeft  = TRIAL_DAYS - elapsed;
@@ -38,9 +39,12 @@ const runTrialCheck = async () => {
       // ── Expired → pause access (org + all its users blocked via ensureOrganizationOperational) ──
       if (daysLeft <= 0) {
         if (org.status !== 'paused') {
-          await supabase.from('organizations')
-            .update({ status: 'paused', payment_status: 'pending', paused_at: new Date().toISOString() })
-            .eq('id', org.id);
+          await db.query(
+            `UPDATE organizations 
+             SET status = $1, payment_status = $2, paused_at = $3 
+             WHERE id = $4`,
+            ['paused', 'pending', new Date().toISOString(), org.id]
+          );
 
           const admin = await getOrgAdminEmail(org.id);
           if (admin?.email) {
