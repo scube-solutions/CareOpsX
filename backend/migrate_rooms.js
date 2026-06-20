@@ -2,9 +2,16 @@ const { Client } = require('pg');
 require('dotenv').config({ path: '../.env.backend' });
 
 async function migrate() {
+  // SSL off by default for internal databases (e.g. Coolify internal PostgreSQL).
+  // Enable only when DB_SSL/PGSSL is truthy or the URL requests sslmode=require.
+  const sslEnv = (process.env.DB_SSL || process.env.PGSSL || '').toLowerCase();
+  const wantSsl =
+    ['true', '1', 'require', 'on'].includes(sslEnv) ||
+    /[?&]sslmode=(require|verify-ca|verify-full)/i.test(process.env.DATABASE_URL || '');
+
   const client = new Client({
     connectionString: process.env.DATABASE_URL,
-    ssl: { rejectUnauthorized: false }
+    ssl: wantSsl ? { rejectUnauthorized: false } : false
   });
 
   try {
