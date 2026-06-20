@@ -526,7 +526,7 @@ const verifyRazorpayPayment = async (req, res) => {
     const { organizationId } = await require('../utils/organizationAccess').getOrganizationContext(req);
 
     await db.query(
-      'UPDATE superadmin.organizations SET billing_status = $1, payment_status = $2 WHERE id = $3',
+      'UPDATE organizations SET billing_status = $1, payment_status = $2 WHERE id = $3',
       [plan, 'paid', organizationId]
     );
 

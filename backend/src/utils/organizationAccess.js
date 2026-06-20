@@ -77,7 +77,7 @@ const isSuperAdmin = (req) => {
 
 const getOrganizationById = async (organizationId) => {
   if (!organizationId) return null;
-  const result = await db.query('SELECT * FROM superadmin.organizations WHERE id = $1 LIMIT 1', [organizationId]);
+  const result = await db.query('SELECT * FROM organizations WHERE id = $1 LIMIT 1', [organizationId]);
   return result.rows[0] || null;
 };
 

@@ -385,9 +385,10 @@ const adminRegister = async (req, res) => {
       + '-' + Math.floor(1000 + Math.random() * 9000);
     const organization_code = slug.toUpperCase().slice(0, 12);
 
-    // Create organization first in superadmin schema
+    // Create the organization (public.organizations is the table referenced by
+    // users.organization_id and read back at login via getOrganizationById).
     const orgInsertResult = await db.query(
-      `INSERT INTO superadmin.organizations (organization_name, slug, organization_code, billing_status, payment_status, portal_access)
+      `INSERT INTO organizations (organization_name, slug, organization_code, billing_status, payment_status, portal_access)
        VALUES ($1, $2, $3, $4, $5, $6)
        RETURNING id, organization_name`,
       [
