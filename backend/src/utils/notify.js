@@ -225,6 +225,28 @@ CareOpsX Team`;
   }
 };
 
+// Self-registration: email a one-click activation link (no OTP).
+const sendActivationLinkEmail = async (email, name, activateUrl) => {
+  const subject = 'Activate your CareOpsX account';
+  const text = `Hi ${name || 'there'},
+
+Thanks for registering with CareOpsX. Please confirm your email address to activate your account.
+
+Click the link below to activate (valid for 24 hours):
+${activateUrl}
+
+If you did not create this account, you can safely ignore this email.
+
+CareOpsX Team`;
+  try {
+    await sendEmail(email, subject, text);
+    return true;
+  } catch (err) {
+    console.warn('[notify] sendActivationLinkEmail failed:', err.message);
+    return false;
+  }
+};
+
 const notifyOrgOnboarded = async ({
   adminEmail, adminName, orgName, orgCode,
   loginUrl, portals, password,
@@ -269,5 +291,6 @@ module.exports = {
   sendPasswordResetEmail,
   sendOtpEmail,
   sendInvitationEmail,
+  sendActivationLinkEmail,
   notifyOrgOnboarded,
 };
