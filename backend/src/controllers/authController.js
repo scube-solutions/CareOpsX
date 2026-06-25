@@ -2,7 +2,7 @@ const bcrypt   = require('bcryptjs');
 const jwt      = require('jsonwebtoken');
 const crypto   = require('crypto');
 const db       = require('../utils/db');
-const { sendPasswordResetEmail, sendOtpEmail } = require('../utils/notify');
+const { sendPasswordResetEmail, sendOtpEmail, sendActivationLinkEmail } = require('../utils/notify');
 const { auditLog } = require('../middlewares/audit');
 
 const MAX_FAILED_ATTEMPTS = 5;
@@ -64,14 +64,15 @@ const register = async (req, res) => {
     const password_hash = await bcrypt.hash(password, 10);
     const primaryRole   = role_id || 3;
 
-    // Generate OTP for email verification
-    const otp    = genOtp();
-    const expiry = new Date(Date.now() + OTP_TTL_MS).toISOString();
+    // Activation link token (replaces OTP). Valid 24h.
+    const activationToken  = crypto.randomBytes(32).toString('hex');
+    const activationExpiry = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString();
 
-    // Insert user — role_id 3 = patient by default, admin passes role_id manually
+    // Insert user — role_id 3 = patient by default. Account stays pending until
+    // the user clicks the activation link sent to their email.
     const userInsertResult = await db.query(
-      `INSERT INTO users (first_name, last_name, email, phone, password_hash, role_id, roles, organization_id, email_verified, otp_code, otp_expiry, otp_purpose)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+      `INSERT INTO users (first_name, last_name, email, phone, password_hash, role_id, roles, organization_id, email_verified, account_status, invite_status, invite_token, invite_token_expiry)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
        RETURNING id, first_name, last_name, email, role_id, organization_id, created_at`,
       [
         first_name,
@@ -83,23 +84,25 @@ const register = async (req, res) => {
         [primaryRole],
         primaryRole === SUPER_ADMIN_ROLE ? null : (organization_id || null),
         false,
-        otp,
-        expiry,
-        'verification'
+        'pending_activation',
+        'pending',
+        activationToken,
+        activationExpiry,
       ]
     );
     const user = userInsertResult.rows[0];
 
-    // Send verification OTP (non-fatal)
-    const sent = await sendOtpEmail(user.email, user.first_name, otp, 'verification');
+    // Email the activation link (non-fatal).
+    const activateUrl = `${FRONTEND_URL}/activate-account?token=${activationToken}`;
+    const sent = await sendActivationLinkEmail(user.email, user.first_name, activateUrl);
 
     return res.status(201).json({
       message: sent
-        ? 'Account created. Please verify your email with the OTP sent.'
-        : 'Account created. Email delivery is unavailable — use the code below to verify.',
-      requires_verification: true,
+        ? 'Account created. Check your email for the activation link to verify your account.'
+        : 'Account created. Email delivery is unavailable — use the activation link below.',
+      requires_activation: true,
       email: user.email,
-      ...(!sent && process.env.NODE_ENV !== 'production' ? { dev_otp: otp } : {}),
+      ...(!sent && process.env.NODE_ENV !== 'production' ? { activate_url: activateUrl } : {}),
     });
 
   } catch (err) {
@@ -656,4 +659,53 @@ const activateInvite = async (req, res) => {
   }
 };
 
-module.exports = { register, login, logout, forgotPassword, resetPassword, resetPasswordWithOtp, changePassword, adminRegister, sendOtp, verifyOtp, getInvite, activateInvite };
+/* ─────────────────────────────────────────
+   ACTIVATE SELF-REGISTERED ACCOUNT (link)
+   Password is already set at registration — the link only verifies the email.
+───────────────────────────────────────── */
+const activateAccount = async (req, res) => {
+  try {
+    const { token } = req.body;
+    if (!token) return res.status(400).json({ error: 'Activation token is required' });
+
+    const r = await db.query(
+      `SELECT id, first_name, last_name, email, role_id, roles, organization_id, invite_status, invite_token_expiry
+       FROM users WHERE invite_token = $1 LIMIT 1`,
+      [token]
+    );
+    const user = r.rows[0];
+    if (!user) return res.status(400).json({ error: 'Invalid or expired activation link' });
+    if (user.invite_status === 'active') return res.status(409).json({ error: 'This account is already activated. Please sign in.' });
+    if (!user.invite_token_expiry || new Date(user.invite_token_expiry) < new Date()) {
+      return res.status(400).json({ error: 'This activation link has expired. Please register again or request a new link.' });
+    }
+
+    await db.query(
+      `UPDATE users
+       SET email_verified = true, is_active = true, account_status = 'active', invite_status = 'active',
+           invite_token = NULL, invite_token_expiry = NULL
+       WHERE id = $1`,
+      [user.id]
+    );
+    await auditLog({ user_id: user.id, role_id: user.role_id, organization_id: user.organization_id || null,
+      action: 'ACCOUNT_ACTIVATED', module: 'Auth', entity_type: 'user', entity_id: user.id, description: 'Account activated via email link' });
+
+    // Auto-login on activation.
+    const userRoles = Array.isArray(user.roles) && user.roles.length ? user.roles : [user.role_id];
+    const jwtToken = jwt.sign(
+      { id: user.id, email: user.email, role_id: user.role_id, roles: userRoles, organization_id: user.organization_id || null },
+      process.env.JWT_SECRET,
+      { expiresIn: '7d' }
+    );
+    return res.json({
+      message: 'Account activated successfully',
+      token: jwtToken,
+      user: { id: user.id, first_name: user.first_name, last_name: user.last_name, email: user.email, role_id: user.role_id, roles: userRoles, organization_id: user.organization_id || null },
+    });
+  } catch (err) {
+    console.error('Activate account error:', err.message);
+    return res.status(500).json({ error: 'Internal server error' });
+  }
+};
+
+module.exports = { register, login, logout, forgotPassword, resetPassword, resetPasswordWithOtp, changePassword, adminRegister, sendOtp, verifyOtp, getInvite, activateInvite, activateAccount };

@@ -6,9 +6,10 @@ export default function RegisterPage() {
   const [form, setForm] = useState({ first_name: '', last_name: '', email: '', phone: '', password: '', confirm_password: '' });
   const [error, setError]   = useState('');
   const [loading, setLoading] = useState(false);
-  const [step, setStep]     = useState('form'); // 'form' | 'otp'
+  const [step, setStep]     = useState('form'); // 'form' | 'sent'
   const [otp, setOtp]       = useState('');
   const [notice, setNotice] = useState('');
+  const [devLink, setDevLink] = useState('');
   const [resending, setResending] = useState(false);
 
   const handle = e => setForm({ ...form, [e.target.name]: e.target.value });
@@ -22,10 +23,10 @@ export default function RegisterPage() {
     setLoading(true);
     try {
       const data = await api('/auth/register', { method: 'POST', body: JSON.stringify({ first_name, last_name, email, phone, password, role_id: 3 }) });
-      if (data.requires_verification) {
-        setStep('otp');
-        if (data.dev_otp) { setOtp(data.dev_otp); setNotice(`Email delivery unavailable. Your code: ${data.dev_otp}`); }
-        else setNotice(`We sent a 6-digit code to ${email}. Enter it below to activate your account.`);
+      if (data.requires_activation) {
+        setStep('sent');
+        setNotice(`We've sent an activation link to ${email}. Open it to activate your account, then sign in.`);
+        if (data.activate_url) setDevLink(data.activate_url);
       } else if (data.token) {
         localStorage.setItem('token', data.token);
         localStorage.setItem('user', JSON.stringify(data.user));
@@ -84,37 +85,22 @@ export default function RegisterPage() {
         </div>
       </a>
 
-      {step === 'otp' ? (
+      {step === 'sent' ? (
         <div style={s.card}>
-          <h1 style={s.title}>Verify Your Email</h1>
-          <p style={s.sub}>Enter the 6-digit code to activate your account.</p>
+          <div style={{ fontSize: 44, textAlign: 'center', marginBottom: 8 }}>📧</div>
+          <h1 style={{ ...s.title, textAlign: 'center' }}>Check your email</h1>
+          <p style={{ ...s.sub, textAlign: 'center' }}>{notice}</p>
 
-          {notice && <div style={{ ...s.error, background: '#f0fdfb', border: '1px solid #99f6e4', color: '#0f766e' }}>{notice}</div>}
-          {error && <div style={s.error}>{error}</div>}
+          {devLink && (
+            <div style={{ ...s.error, background: '#fffbeb', border: '1px solid #fde68a', color: '#92400e', wordBreak: 'break-all' }}>
+              Email delivery unavailable. Activation link:<br />
+              <a href={devLink} style={{ color: '#1d4ed8' }}>{devLink}</a>
+            </div>
+          )}
 
-          <div style={s.fg}>
-            <label style={s.label}>Verification Code</label>
-            <input
-              style={{ ...s.input, fontSize: '1.4rem', letterSpacing: '.5em', textAlign: 'center', fontWeight: 700 }}
-              value={otp}
-              onChange={e => setOtp(e.target.value.replace(/\D/g, '').slice(0, 6))}
-              placeholder="••••••"
-              inputMode="numeric"
-              maxLength={6}
-              onKeyDown={e => { if (e.key === 'Enter') verify(); }}
-            />
-          </div>
-
-          <button style={{ ...s.btn, opacity: loading ? .7 : 1 }} onClick={verify} disabled={loading}>
-            {loading ? 'Verifying…' : 'Verify & Continue →'}
-          </button>
-
+          <a href="/login" style={{ ...s.btn, display: 'block', textAlign: 'center', textDecoration: 'none', marginTop: '1rem' }}>Go to Sign In</a>
           <p style={s.switch}>
-            Didn&apos;t get the code?{' '}
-            <span onClick={resend} style={{ ...s.link, cursor: 'pointer' }}>{resending ? 'Sending…' : 'Resend Code'}</span>
-          </p>
-          <p style={s.switch}>
-            <span onClick={() => { setStep('form'); setOtp(''); setError(''); setNotice(''); }} style={{ ...s.link, cursor: 'pointer' }}>← Back to registration</span>
+            <span onClick={() => { setStep('form'); setError(''); setNotice(''); setDevLink(''); }} style={{ ...s.link, cursor: 'pointer' }}>← Back to registration</span>
           </p>
         </div>
       ) : (
