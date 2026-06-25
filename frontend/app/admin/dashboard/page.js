@@ -3,7 +3,6 @@
 import { useEffect, useState } from 'react';
 import { api } from '@/lib/api';
 import { T } from '../layout';
-import AISummaryCard from '@/lib/AISummaryCard';
 import PlanFeaturesCard from '@/lib/PlanFeaturesCard';
 
 function greeting() {
@@ -173,9 +172,6 @@ export default function AdminDashboardPage() {
 
       {/* Plan upgrade prompt (locked features) */}
       <PlanFeaturesCard />
-
-      {/* AI executive overview */}
-      <AISummaryCard />
 
       {/* Middle row */}
       <div className="responsive-grid-2" style={{ gap: 16, marginBottom: 24 }}>
