@@ -46,6 +46,12 @@ export default function OnboardPage() {
         method: 'POST',
         body: JSON.stringify({ ...form, plan }),
       });
+      // Activation link sent to email — verify before signing in (no OTP).
+      if (data.requires_activation) {
+        setSuccess(true);
+        setTimeout(() => { window.location.href = '/login'; }, 2500);
+        return;
+      }
       localStorage.setItem('token', data.token);
       localStorage.setItem('user', JSON.stringify(data.user));
       setSuccess(true);

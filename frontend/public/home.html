@@ -3598,10 +3598,7 @@
         const data = await res.json();
         if (!res.ok) {
           btn.textContent = orig; btn.disabled = false;
-          if (data.requires_verification) {
-            window.location.href = `/verify-email?email=${encodeURIComponent(data.email || email)}`;
-            return;
-          }
+          // Unverified accounts must activate via the email link (no OTP).
           alert(data.error || 'Login failed. Please check your credentials.');
           return;
         }
@@ -3662,10 +3659,10 @@
           return;
         }
         closeModal();
-        // Require email verification before activation
-        if (data.requires_verification) {
-          if (data.dev_otp) alert(`Email delivery is unavailable. Your verification code is: ${data.dev_otp}`);
-          window.location.href = `/verify-email?email=${encodeURIComponent(data.email || email)}`;
+        // Activation link sent to email — no OTP.
+        if (data.requires_activation) {
+          if (data.activate_url) alert(`Account created. Email delivery is unavailable. Open this activation link to verify: ${data.activate_url}`);
+          else alert('Account created! Please check your email for the activation link to verify your account, then sign in.');
           return;
         }
         if (data.token) localStorage.setItem('token', data.token);

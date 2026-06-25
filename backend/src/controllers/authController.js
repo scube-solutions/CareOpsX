@@ -155,9 +155,9 @@ const login = async (req, res) => {
       return res.status(401).json({ error: lock ? 'Too many failed attempts. Account locked for 30 seconds.' : 'Invalid email or password' });
     }
 
-    // Block unverified accounts (legacy users have email_verified = null → allowed)
+    // Block unverified accounts — they must use the activation link (no OTP).
     if (user.email_verified === false) {
-      return res.status(403).json({ error: 'Email not verified', requires_verification: true, email: user.email });
+      return res.status(403).json({ error: 'Your account is not activated yet. Please use the activation link sent to your email.', requires_activation: true, email: user.email });
     }
 
     // Status gate — only active accounts may sign in.
@@ -409,12 +409,13 @@ const adminRegister = async (req, res) => {
     const [first_name, ...rest] = display_name.trim().split(' ');
     const last_name = rest.join(' ') || '-';
 
-    const otp    = genOtp();
-    const expiry = new Date(Date.now() + OTP_TTL_MS).toISOString();
+    // Activation link token (replaces OTP). Valid 24h.
+    const activationToken  = crypto.randomBytes(32).toString('hex');
+    const activationExpiry = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString();
 
     const userInsertResult = await db.query(
-      `INSERT INTO users (first_name, last_name, email, phone, password_hash, role_id, roles, organization_id, is_active, email_verified, otp_code, otp_expiry, otp_purpose)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+      `INSERT INTO users (first_name, last_name, email, phone, password_hash, role_id, roles, organization_id, is_active, email_verified, account_status, invite_status, invite_token, invite_token_expiry)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
        RETURNING id, first_name, last_name, email, role_id, organization_id, created_at`,
       [
         first_name,
@@ -427,23 +428,25 @@ const adminRegister = async (req, res) => {
         org.id,
         true,
         false,
-        otp,
-        expiry,
-        'verification'
+        'pending_activation',
+        'pending',
+        activationToken,
+        activationExpiry,
       ]
     );
     const user = userInsertResult.rows[0];
 
-    // Send verification OTP (non-fatal)
-    const sent = await sendOtpEmail(user.email, user.first_name, otp, 'verification');
+    // Email the activation link (non-fatal).
+    const activateUrl = `${FRONTEND_URL}/activate-account?token=${activationToken}`;
+    const sent = await sendActivationLinkEmail(user.email, user.first_name, activateUrl);
 
     return res.status(201).json({
       message: sent
-        ? 'Clinic created. Please verify your email with the OTP sent.'
-        : 'Clinic created. Email delivery is unavailable — use the code below to verify.',
-      requires_verification: true,
+        ? 'Clinic created. Check your email for the activation link to verify your account.'
+        : 'Clinic created. Email delivery is unavailable — use the activation link below.',
+      requires_activation: true,
       email: user.email,
-      ...(!sent && process.env.NODE_ENV !== 'production' ? { dev_otp: otp } : {}),
+      ...(!sent && process.env.NODE_ENV !== 'production' ? { activate_url: activateUrl } : {}),
     });
   } catch (err) {
     console.error('AdminRegister error:', err.message);

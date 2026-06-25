@@ -55,10 +55,7 @@ export default function LoginPage() {
       window.location.href = routes[data.user.role_id] || '/login';
 
     } catch (err) {
-      if (err.data?.requires_verification) {
-        window.location.href = `/verify-email?email=${encodeURIComponent(err.data.email || form.email)}`;
-        return;
-      }
+      // Unverified accounts must activate via the email link (no OTP page).
       setError(err.message);
     } finally {
       setLoading(false);
