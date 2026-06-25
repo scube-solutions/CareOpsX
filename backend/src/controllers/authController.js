@@ -6,7 +6,7 @@ const { sendPasswordResetEmail, sendOtpEmail, sendActivationLinkEmail } = requir
 const { auditLog } = require('../middlewares/audit');
 
 const MAX_FAILED_ATTEMPTS = 5;
-const LOCK_MS = 15 * 60 * 1000; // 15 minutes
+const LOCK_MS = 30 * 1000; // 30 seconds
 
 // Only fully-active accounts may sign in.
 const ensureLoginAllowed = (user) => {
@@ -136,8 +136,8 @@ const login = async (req, res) => {
 
     // Account lockout check
     if (user.locked_until && new Date(user.locked_until) > new Date()) {
-      const mins = Math.ceil((new Date(user.locked_until) - new Date()) / 60000);
-      return res.status(423).json({ error: `Account locked due to failed login attempts. Try again in ${mins} minute(s).` });
+      const secs = Math.ceil((new Date(user.locked_until) - new Date()) / 1000);
+      return res.status(423).json({ error: `Account locked due to failed login attempts. Try again in ${secs} second(s).` });
     }
 
     // Compare password
@@ -151,8 +151,8 @@ const login = async (req, res) => {
       );
       await auditLog({ user_id: user.id, role_id: user.role_id, organization_id: user.organization_id || null,
         action: lock ? 'ACCOUNT_LOCKED' : 'FAILED_LOGIN', module: 'Auth', entity_type: 'user', entity_id: user.id,
-        description: `Failed login (${attempts}/${MAX_FAILED_ATTEMPTS})${lock ? ' — account locked 15m' : ''}` });
-      return res.status(401).json({ error: lock ? 'Too many failed attempts. Account locked for 15 minutes.' : 'Invalid email or password' });
+        description: `Failed login (${attempts}/${MAX_FAILED_ATTEMPTS})${lock ? ' — account locked 30s' : ''}` });
+      return res.status(401).json({ error: lock ? 'Too many failed attempts. Account locked for 30 seconds.' : 'Invalid email or password' });
     }
 
     // Block unverified accounts (legacy users have email_verified = null → allowed)
